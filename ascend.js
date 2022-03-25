@@ -35,6 +35,7 @@ export async function main(ns) {
     // Kill any other scripts that may interfere with our spending
     let pid = await runCommand(ns, `ns.ps().filter(s => ${JSON.stringify(options['scripts-to-kill'])}.includes(s.filename)).forEach(s => ns.kill(s.pid));`, '/Temp/kill-processes.js');
     await waitForProcessToComplete(ns, pid, true); // Wait for the script to shut down, indicating it has shut down other scripts
+	ns.stopAction(); //collect pending reputation
 
     // STEP 1: Liquidate Stocks and (SF9) Hacknet Hashes
     log(ns, 'Sell stocks and hashes...', true, 'info');
