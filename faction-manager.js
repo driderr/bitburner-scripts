@@ -90,7 +90,7 @@ export async function main(ns) {
     printToTerminal = (options.v || options.verbose === true || options.verbose === null) && !options['join-only'];
     const allFactions = options.a || options.all;
     const afterFactions = options['after-faction'].map(f => f.replaceAll("_", " "));
-    const omitFactions = options['ignore-faction'].map(f => f.replaceAll("_", " "));
+    const omitFactions = options['ignore-faction'].map(f => f.replaceAll("_", " ")).toString().split(',');	
     const omitAugs = options['omit-aug'].map(f => f.replaceAll("_", " "));
     const desiredAugs = options['aug-desired'].map(f => f.replaceAll("_", " "));
     const ignorePlayerData = options.i || options['ignore-player-data'];
