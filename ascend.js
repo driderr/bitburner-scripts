@@ -4,7 +4,7 @@ const defaultScriptsToKill = ['daemon.js', 'gangs.js', 'sleeves.js', 'work-for-f
     .map(s => getFilePath(s));
 
 const argsSchema = [
-    ['reset', true], // By default (for now) does not actually install augmentations unless you use this flag
+    ['reset', false], // By default (for now) does not actually install augmentations unless you use this flag
     // Note: --force option results in passing faction-manager.js the flag to ignore stanek's gift not being accepted
     ['force', false], // There will be sanity checks - use this option to bypass them
     ['scripts-to-kill', []], // Kill these money-spending scripts at launch
