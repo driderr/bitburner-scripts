@@ -275,6 +275,7 @@ export async function main(ns) {
             args: () => ['--reserve-by-time', '--utilization-trigger', '0', '--reserve-percent', '0.9'], // Spend up to 10% of our money on temporary (only for this aug) servers
             shouldRun: () => {
                 if (shouldReserveMoney() || !shouldImproveHacking()) return false; // Skip if we're saving up, or if hack income is not important in this BN or at this time               
+				if (9 in dictSourceFiles) return false; //can't buy any servers in BitNode 9
                 let utilization = getTotalNetworkUtilization(); // Utilization-based heuristics for when we likely could use more RAM for hacking
                 return utilization >= maxUtilization || utilization > 0.80 && maxTargets < 20 || utilization > 0.50 && maxTargets < 5;
             }
