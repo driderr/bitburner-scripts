@@ -40,9 +40,8 @@ export async function main(ns) {
     await waitForProcessToComplete(ns, pid, true); // Wait for the script to shut down, indicating it has shut down other scripts
 	ns.stopAction(); //collect pending reputation
 
-    // If the user is training, we have to stop them, or they will continue spending money forever
-    if (playerData.isWorking && (playerData.workType.includes('university') || playerData.workType.includes('gym')))
-        await getNsDataThroughFile(ns, 'ns.stopAction()', '/Temp/stop-player-action.txt');
+    // Stop the current action so that we're no longer spending money (if training) and can collect rep earned (if working)
+    await getNsDataThroughFile(ns, 'ns.stopAction()', '/Temp/stop-player-action.txt');
 
     // Clear any global reserve so that all money can be spent
     await ns.write(getFilePath('reserve.txt'), '0', "w");

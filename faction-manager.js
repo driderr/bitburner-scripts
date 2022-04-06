@@ -100,7 +100,7 @@ export async function main(ns) {
     const sf4Level = ownedSourceFiles[4] || 0;
     const sf11Level = ownedSourceFiles[11] || 0;
     if (sf4Level == 0)
-        log(ns, `WARNING: This script makes heavy use of singularity functions. Without SF4, you're unlikely to get it working.`);
+        return log(ns, `ERROR: This script requires SF4 (singularity) functions to work.`, true, 'ERROR');
     else if (sf4Level < 3)
         log(ns, `WARNING: This script makes heavy use of singularity functions, which are quite expensive before you have SF4.3. ` +
             `Unless you have a lot of free RAM for temporary scripts, you may get runtime errors.`);
@@ -198,9 +198,9 @@ async function updateFactionData(ns, allFactions, factionsToOmit) {
     let dictFactionReps = await getNsDataThroughFile(ns, factionsDictCommand('ns.getFactionRep(faction)'), '/Temp/faction-rep.txt');
     let dictFactionFavors = await getNsDataThroughFile(ns, factionsDictCommand('ns.getFactionFavor(faction)'), '/Temp/faction-favor.txt');
 
-    // Need information about our gang to work around a TRP bug - gang faction appears to have it available, but it's not    
+    // Need information about our gang to work around a TRP bug - gang faction appears to have it available, but it's not (outside of BN2)  
     gangFaction = await getNsDataThroughFile(ns, 'ns.gang.inGang() ? ns.gang.getGangInformation().faction : false', '/Temp/gang-faction.txt');
-    if (gangFaction) dictFactionAugs[gangFaction] = dictFactionAugs[gangFaction]?.filter(a => a != "The Red Pill");
+    if (gangFaction && playerData.bitNodeN != 2) dictFactionAugs[gangFaction] = dictFactionAugs[gangFaction]?.filter(a => a != "The Red Pill");
 
     factionData = Object.fromEntries(factionNames.map(faction => [faction, {
         name: faction,
