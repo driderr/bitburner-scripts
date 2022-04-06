@@ -9,7 +9,7 @@ let cachedCrimeStats; // Cache of crime statistics
 let options;
 const argsSchema = [
     ['min-shock-recovery', 97], // Minimum shock recovery before attempting to train or do crime (Set to 100 to disable, 0 to recover fully)
-    ['shock-recovery', 0.05], // Set to a number between 0 and 1 to devote that ratio of time to periodic shock recovery (until shock is at 0)
+    ['shock-recovery', 0],//0.05], // Set to a number between 0 and 1 to devote that ratio of time to periodic shock recovery (until shock is at 0)
     ['crime', null], // If specified, sleeves will perform only this crime regardless of stats
     ['homicide-chance-threshold', 0.5], // Sleeves will automatically start homicide once their chance of success succeeds this ratio
     ['aug-budget', 0.1], // Spend up to this much of current cash on augs per tick (Default is high, because these are permanent for the rest of the BN)
@@ -41,13 +41,17 @@ export async function main(ns) {
     }
     for (let i = 0; i < numSleeves; i++)
         availableAugs[i] = null;
-
+	var gymPid = 0;
     while (true) {
         try {
             let cash = ns.getServerMoneyAvailable("home") - (options['reserve'] != null ? options['reserve'] : Number(ns.read("reserve.txt") || 0));
             let budget = cash * options['aug-budget'];
             let playerInfo = await getNsDataThroughFile(ns, 'ns.getPlayer()', '/Temp/player-info.txt')
             let allSleeveStats = await getNsDataThroughFile(ns, `[...Array(${numSleeves}).keys()].map(i => ns.sleeve.getSleeveStats(i))`, '/Temp/sleeve-stats.txt');
+			let str = sleeveStats.strength;
+			let def = sleeveStats.defense;
+			let dex = sleeveStats.dexterity;
+			let agi = sleeveStats.agility;
             for (let i = 0; i < numSleeves; i++) {
                 let sleeveStats = allSleeveStats[i];
                 let shock = sleeveStats.shock;
@@ -75,6 +79,10 @@ export async function main(ns) {
                 }
                 // Pick what we think the sleeve should be doing right now
                 let command, designatedTask;
+				if (gymPid && str >= 100) {
+                    ns.kill(gymPid);
+                    gymPid = 0;
+                }
                 if (sync < 100) { // Synchronize
                     designatedTask = "synchronize";
                     command = `ns.sleeve.setToSynchronize(${i})`;
@@ -82,8 +90,28 @@ export async function main(ns) {
                 else if (shock > options['min-shock-recovery'] || shock > 0 && options['shock-recovery'] > 0 && Math.random() < options['shock-recovery']) { // Recover from shock
                     designatedTask = "recover from shock";
                     command = `ns.sleeve.setToShockRecovery(${i})`;
-                } // If player is currently working for faction or company rep, sleeves 0 can help him out (Note: Only one sleeve can work for a faction)
-                else if (i == 0 && !options['disable-follow-player'] && playerInfo.isWorking && playerInfo.workType == "Working for Faction") {
+                } else if (str < 100) {
+                    if (!gymPid) {
+                        gymPid = ns.ps("home").filter(process => process.filename === "/abs/spend-hacknet-hashes.js" && process.args.includes("Improve Gym Training"))[0]?.pid ?? 0;
+                        if (!gymPid)
+                            gymPid = ns.run("/abs/spend-hacknet-hashes.js", 1, "--spend-on", "Improve Gym Training", "--liquidate");
+                    }
+                    command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "str")`;
+                    designatedTask = "gym str";
+                    if (dex <= str) {
+                        command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "dex")`;
+                        designatedTask = "gym dex";
+                    }
+                    if (agi <= dex) {
+                        command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "agi")`;
+                        designatedTask = "gym agi";
+                    }
+                    if (def <= agi) {
+                        command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "def")`;
+                        designatedTask = "gym def";
+					}
+				 // If player is currently working for faction or company rep, sleeves 0 can help him out (Note: Only one sleeve can work for a faction)
+				} else if (i == 0 && !options['disable-follow-player'] && playerInfo.isWorking && playerInfo.workType == "Working for Faction") {
                     // TODO: We should be able to borrow logic from work-for-factions.js to have more sleeves work for useful factions / companies
                     const work = works[workByFaction[playerInfo.currentWorkFactionName] || 0];
                     designatedTask = `work for faction '${playerInfo.currentWorkFactionName}' (${work})`;
