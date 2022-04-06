@@ -1,4 +1,4 @@
-import { getNsDataThroughFile, formatMoney, formatDuration, disableLogs, log } from './helpers.js'
+import { getNsDataThroughFile, formatMoney, formatDuration, disableLogs, log } from '/abs/helpers.js'
 
 const interval = 5000; // Uodate (tick) this often
 const minTaskWorkTime = 59000; // Sleeves assigned a new task should stick to it for at least this many milliseconds
@@ -41,21 +41,21 @@ export async function main(ns) {
     }
     for (let i = 0; i < numSleeves; i++)
         availableAugs[i] = null;
-	var gymPid = 0;
+    var gymPid = 0;
     while (true) {
         try {
             let cash = ns.getServerMoneyAvailable("home") - (options['reserve'] != null ? options['reserve'] : Number(ns.read("reserve.txt") || 0));
             let budget = cash * options['aug-budget'];
             let playerInfo = await getNsDataThroughFile(ns, 'ns.getPlayer()', '/Temp/player-info.txt')
             let allSleeveStats = await getNsDataThroughFile(ns, `[...Array(${numSleeves}).keys()].map(i => ns.sleeve.getSleeveStats(i))`, '/Temp/sleeve-stats.txt');
-			let str = sleeveStats.strength;
-			let def = sleeveStats.defense;
-			let dex = sleeveStats.dexterity;
-			let agi = sleeveStats.agility;
             for (let i = 0; i < numSleeves; i++) {
                 let sleeveStats = allSleeveStats[i];
                 let shock = sleeveStats.shock;
                 let sync = sleeveStats.sync;
+                let str = sleeveStats.strength;
+                let def = sleeveStats.defense;
+                let dex = sleeveStats.dexterity;
+                let agi = sleeveStats.agility;
                 // Manage Augmentations
                 if (shock == 0 && availableAugs[i] == null) // No augs are available augs until shock is 0
                     availableAugs[i] = (await getNsDataThroughFile(ns, `ns.sleeve.getSleevePurchasableAugs(${i})`, '/Temp/sleeve-augs.txt')).sort((a, b) => a.cost - b.cost); // list of { name, cost }
@@ -79,7 +79,7 @@ export async function main(ns) {
                 }
                 // Pick what we think the sleeve should be doing right now
                 let command, designatedTask;
-				if (gymPid && str >= 100) {
+                if (gymPid && str >= 100) {
                     ns.kill(gymPid);
                     gymPid = 0;
                 }
@@ -109,9 +109,9 @@ export async function main(ns) {
                     if (def <= agi) {
                         command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "def")`;
                         designatedTask = "gym def";
-					}
-				 // If player is currently working for faction or company rep, sleeves 0 can help him out (Note: Only one sleeve can work for a faction)
-				} else if (i == 0 && !options['disable-follow-player'] && playerInfo.isWorking && playerInfo.workType == "Working for Faction") {
+                    }
+                    // If player is currently working for faction or company rep, sleeves 0 can help him out (Note: Only one sleeve can work for a faction)
+                } else if (i == 0 && !options['disable-follow-player'] && playerInfo.isWorking && playerInfo.workType == "Working for Faction") {
                     // TODO: We should be able to borrow logic from work-for-factions.js to have more sleeves work for useful factions / companies
                     const work = works[workByFaction[playerInfo.currentWorkFactionName] || 0];
                     designatedTask = `work for faction '${playerInfo.currentWorkFactionName}' (${work})`;
