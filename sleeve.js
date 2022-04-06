@@ -1,4 +1,4 @@
-import { getNsDataThroughFile, formatMoney, formatDuration, disableLogs, log } from '/abs/helpers.js'
+import { getNsDataThroughFile, formatMoney, formatDuration, disableLogs, log } from './helpers.js'
 
 const interval = 5000; // Uodate (tick) this often
 const minTaskWorkTime = 59000; // Sleeves assigned a new task should stick to it for at least this many milliseconds
