@@ -241,10 +241,10 @@ export async function main(ns) {
         { name: "spend-hacknet-hashes.js", args: [], shouldRun: () => 9 in dictSourceFiles }, // Always have this running to make sure hashes aren't wasted
         { name: "sleeve.js", tail: openTailWindows, shouldRun: () => 10 in dictSourceFiles }, // Script to create manage our sleeves for us
         { name: "gangs.js", tail: openTailWindows, shouldRun: () => 2 in dictSourceFiles }, // Script to create manage our gang for us
-        {
+        /*{
             name: "work-for-factions.js", args: ['--fast-crimes-only', '--no-coding-contracts'],  // Singularity script to manage how we use our "focus" work.
             shouldRun: () => 4 in dictSourceFiles && (ns.getServerMaxRam("home") >= 128 / (2 ** dictSourceFiles[4])) // Higher SF4 levels result in lower RAM requirements
-        },
+        },*/
     ];
     asynchronousHelpers.forEach(helper => helper.name = getFilePath(helper.name));
     asynchronousHelpers.forEach(helper => helper.isLaunched = false);
