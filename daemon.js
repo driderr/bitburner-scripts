@@ -244,8 +244,8 @@ export async function main(ns) {
         /*{
             name: "work-for-factions.js", args: ['--fast-crimes-only', '--no-coding-contracts'],  // Singularity script to manage how we use our "focus" work.
             shouldRun: () => 4 in dictSourceFiles && (ns.getServerMaxRam("home") >= 128 / (2 ** dictSourceFiles[4])) // Higher SF4 levels result in lower RAM requirements
-        },*/
-        //{ name: "bladeburner.js", tail: openTailWindows, shouldRun: () => 7 in dictSourceFiles }, // Script to create manage bladeburner for us
+        },
+        { name: "bladeburner.js", tail: openTailWindows, shouldRun: () => 7 in dictSourceFiles && playerStats.bitNodeN != 8 }, // Script to create manage bladeburner for us
     ];
     asynchronousHelpers.forEach(helper => helper.name = getFilePath(helper.name));
     asynchronousHelpers.forEach(helper => helper.isLaunched = false);
@@ -316,6 +316,8 @@ export async function main(ns) {
 /** @param {NS} ns 
  * Gain a hack XP early after a new Augmentation by studying a bit, then doing a bit of XP grinding */
 async function kickstartHackXp(ns) {
+    let startedStudying = false;
+    try {
     if (4 in dictSourceFiles && options['initial-study-time'] > 0) {
         // The safe/cheap thing to do is to study for free at the local university in our current town
         // The most effective thing is to study Algorithms at ZB university in Aevum.
@@ -333,6 +335,7 @@ async function kickstartHackXp(ns) {
             else {
                 const course = playerStats.city == "Sector-12" ? "Study Computer Science" : "Algorithms"; // Assume if we are still in Sector-12 we are poor and should only take the free course
                 await getNsDataThroughFile(ns, `ns.universityCourse('${university}', '${course}')`, '/Temp/study-for-hack-xp.txt');
+                    startedStudying = true;
                 await ns.asleep(studyTime * 1000); // Wait for studies to affect Hack XP. This will often greatly reduce time-to-hack/grow/weaken, and avoid a slow first cycle
             }
         } catch { log('WARNING: Failed to study to kickstart hack XP', false, 'warning'); }
@@ -360,6 +363,9 @@ async function kickstartHackXp(ns) {
                 return log('WARNING: Failed to schedule an XP cycle', false, 'warning');
         }
     }
+    } finally {
+        if (startedStudying) getNsDataThroughFile(ns, `ns.stopAction()`, '/Temp/stop-action.txt');
+}
 }
 
 // Check running status of scripts on servers
