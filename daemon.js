@@ -4,7 +4,7 @@ import {
     getNsDataThroughFile_Custom, runCommand_Custom, waitForProcessToComplete_Custom,
     tryGetBitNodeMultipliers_Custom, getActiveSourceFiles_Custom,
     getFnRunViaNsExec, getFnIsAliveViaNsPs, autoRetry
-} from './helpers.js'
+} from '/abs/helpers.js'
 
 // the purpose of the daemon is: it's our global starting point.
 // it handles several aspects of the game, primarily hacking for money.
@@ -241,7 +241,7 @@ export async function main(ns) {
         { name: "spend-hacknet-hashes.js", args: [], shouldRun: () => 9 in dictSourceFiles }, // Always have this running to make sure hashes aren't wasted
         { name: "sleeve.js", tail: openTailWindows, shouldRun: () => 10 in dictSourceFiles }, // Script to create manage our sleeves for us
         { name: "gangs.js", tail: openTailWindows, shouldRun: () => 2 in dictSourceFiles }, // Script to create manage our gang for us
-        /*{
+        {
             name: "work-for-factions.js", args: ['--fast-crimes-only', '--no-coding-contracts'],  // Singularity script to manage how we use our "focus" work.
             shouldRun: () => 4 in dictSourceFiles && (ns.getServerMaxRam("home") >= 128 / (2 ** dictSourceFiles[4])) // Higher SF4 levels result in lower RAM requirements
         },
@@ -280,7 +280,7 @@ export async function main(ns) {
             args: () => ['--reserve-percent', Math.min(0.9, 0.1 * Object.values(dictSourceFiles).reduce((t, v) => t + v, 0)), '--utilization-trigger', '0'],
             shouldRun: () => {
                 if (shouldReserveMoney() || !shouldImproveHacking()) return false; // Skip if we're saving up, or if hack income is not important in this BN or at this time               
-				if (9 in dictSourceFiles) return false; //can't buy any servers in BitNode 9
+                if (9 in dictSourceFiles) return false; //can't buy any servers in BitNode 9
                 let utilization = getTotalNetworkUtilization(); // Utilization-based heuristics for when we likely could use more RAM for hacking
                 return utilization >= maxUtilization || utilization > 0.80 && maxTargets < 20 || utilization > 0.50 && maxTargets < 5;
             }
@@ -318,54 +318,54 @@ export async function main(ns) {
 async function kickstartHackXp(ns) {
     let startedStudying = false;
     try {
-    if (4 in dictSourceFiles && options['initial-study-time'] > 0) {
-        // The safe/cheap thing to do is to study for free at the local university in our current town
-        // The most effective thing is to study Algorithms at ZB university in Aevum.
-        // Depending on our money, try to do the latter.
-        try {
-            const studyTime = options['initial-study-time'];
-            log(`INFO: Studying for ${studyTime} seconds to kickstart hack XP and speed up initial cycle times. (set --initial-study-time 0 to disable this step.)`);
-            const money = ns.getServerMoneyAvailable("home")
-            if (money >= 200000) // If we can afford to travel, we're probably far enough along that it's worthwhile going to Volhaven where ZB university is.
-                await getNsDataThroughFile(ns, `ns.travelToCity("Volhaven")`, '/Temp/travel-to-city.txt');
-            await updatePlayerStats(); // Update player stats to be certain of our new location.
-            const university = playerStats.city == "Sector-12" ? "Rothman University" : playerStats.city == "Aevum" ? "Summit University" : playerStats.city == "Volhaven" ? "ZB Institute of Technology" : null;
-            if (!university)
-                log(`INFO: Cannot study, because you are in city ${playerStats.city} which has no known university, and you cannot afford to travel to another city.`);
-            else {
-                const course = playerStats.city == "Sector-12" ? "Study Computer Science" : "Algorithms"; // Assume if we are still in Sector-12 we are poor and should only take the free course
-                await getNsDataThroughFile(ns, `ns.universityCourse('${university}', '${course}')`, '/Temp/study-for-hack-xp.txt');
+        if (4 in dictSourceFiles && options['initial-study-time'] > 0) {
+            // The safe/cheap thing to do is to study for free at the local university in our current town
+            // The most effective thing is to study Algorithms at ZB university in Aevum.
+            // Depending on our money, try to do the latter.
+            try {
+                const studyTime = options['initial-study-time'];
+                log(`INFO: Studying for ${studyTime} seconds to kickstart hack XP and speed up initial cycle times. (set --initial-study-time 0 to disable this step.)`);
+                const money = ns.getServerMoneyAvailable("home")
+                if (money >= 200000) // If we can afford to travel, we're probably far enough along that it's worthwhile going to Volhaven where ZB university is.
+                    await getNsDataThroughFile(ns, `ns.travelToCity("Volhaven")`, '/Temp/travel-to-city.txt');
+                await updatePlayerStats(); // Update player stats to be certain of our new location.
+                const university = playerStats.city == "Sector-12" ? "Rothman University" : playerStats.city == "Aevum" ? "Summit University" : playerStats.city == "Volhaven" ? "ZB Institute of Technology" : null;
+                if (!university)
+                    log(`INFO: Cannot study, because you are in city ${playerStats.city} which has no known university, and you cannot afford to travel to another city.`);
+                else {
+                    const course = playerStats.city == "Sector-12" ? "Study Computer Science" : "Algorithms"; // Assume if we are still in Sector-12 we are poor and should only take the free course
+                    await getNsDataThroughFile(ns, `ns.universityCourse('${university}', '${course}')`, '/Temp/study-for-hack-xp.txt');
                     startedStudying = true;
-                await ns.asleep(studyTime * 1000); // Wait for studies to affect Hack XP. This will often greatly reduce time-to-hack/grow/weaken, and avoid a slow first cycle
-            }
-        } catch { log('WARNING: Failed to study to kickstart hack XP', false, 'warning'); }
-    }
-    // Run periodic scripts for the first time to e.g. buy tor and any hack tools available to us (we will continue studying briefly while this happens)
-    await runPeriodicScripts(ns);
-    // Immediately attempt to root initially-accessible targets before attempting any XP cycles
-    for (const server of serverListByTargetOrder.filter(s => !s.hasRoot() && s.canCrack()))
-        await doRoot(ns, server);
-    // Before starting normal hacking, fire a couple hack XP-focused cycle using a chunk of free RAM to further boost RAM
-    if (!xpOnly) {
-        let maxXpCycles = 10;
-        const maxXpTime = options['initial-hack-xp-time'];
-        const start = Date.now();
-        const minCycleTime = getXPFarmTarget().timeToWeaken();
-        if (minCycleTime > maxXpTime * 1000)
-            return log(`INFO: Skipping XP cycle because the best target (${getXPFarmTarget()}) time to weaken (${formatDuration(minCycleTime)})` +
-                ` is greater than the configured --initial-hack-xp-time of ${maxXpTime} seconds.`);
-        log(`INFO: Running Hack XP-focused cycles for ${maxXpTime} seconds to further boost hack XP and speed up main hack cycle times. (set --initial-hack-xp-time 0 to disable this step.)`);
-        while (maxXpCycles-- > 0 && Date.now() - start < maxXpTime * 1000) {
-            let cycleTime = await farmHackXp(ns, 1, verbose, 1);
-            if (cycleTime)
-                await ns.asleep(cycleTime);
-            else
-                return log('WARNING: Failed to schedule an XP cycle', false, 'warning');
+                    await ns.asleep(studyTime * 1000); // Wait for studies to affect Hack XP. This will often greatly reduce time-to-hack/grow/weaken, and avoid a slow first cycle
+                }
+            } catch { log('WARNING: Failed to study to kickstart hack XP', false, 'warning'); }
         }
-    }
+        // Run periodic scripts for the first time to e.g. buy tor and any hack tools available to us (we will continue studying briefly while this happens)
+        await runPeriodicScripts(ns);
+        // Immediately attempt to root initially-accessible targets before attempting any XP cycles
+        for (const server of serverListByTargetOrder.filter(s => !s.hasRoot() && s.canCrack()))
+            await doRoot(ns, server);
+        // Before starting normal hacking, fire a couple hack XP-focused cycle using a chunk of free RAM to further boost RAM
+        if (!xpOnly) {
+            let maxXpCycles = 10;
+            const maxXpTime = options['initial-hack-xp-time'];
+            const start = Date.now();
+            const minCycleTime = getXPFarmTarget().timeToWeaken();
+            if (minCycleTime > maxXpTime * 1000)
+                return log(`INFO: Skipping XP cycle because the best target (${getXPFarmTarget()}) time to weaken (${formatDuration(minCycleTime)})` +
+                    ` is greater than the configured --initial-hack-xp-time of ${maxXpTime} seconds.`);
+            log(`INFO: Running Hack XP-focused cycles for ${maxXpTime} seconds to further boost hack XP and speed up main hack cycle times. (set --initial-hack-xp-time 0 to disable this step.)`);
+            while (maxXpCycles-- > 0 && Date.now() - start < maxXpTime * 1000) {
+                let cycleTime = await farmHackXp(ns, 1, verbose, 1);
+                if (cycleTime)
+                    await ns.asleep(cycleTime);
+                else
+                    return log('WARNING: Failed to schedule an XP cycle', false, 'warning');
+            }
+        }
     } finally {
         if (startedStudying) getNsDataThroughFile(ns, `ns.stopAction()`, '/Temp/stop-action.txt');
-}
+    }
 }
 
 // Check running status of scripts on servers
@@ -542,9 +542,9 @@ async function doTargetingLoop(ns) {
             // simultaneously compare our current target to potential targets
             for (var i = 0; i < serverListByTargetOrder.length; i++) {
                 //if ((Date.now() - start) >= maxLoopTime) { // To avoid lagging the game, completely break out of the loop if we start to run over
-                    //skipped = skipped.concat(serverListByTargetOrder.slice(i));
-                    //workCapped = true;
-                    //break;
+                //skipped = skipped.concat(serverListByTargetOrder.slice(i));
+                //workCapped = true;
+                //break;
                 //}
 
                 const server = serverListByTargetOrder[i];
