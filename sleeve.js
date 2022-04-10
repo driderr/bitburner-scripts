@@ -98,7 +98,8 @@ export async function main(ns) {
 
                 // Decide what we think the sleeve should be doing for the next little while
                 let command, designatedTask;
-                let untrainedStats = trainStats.filter(stat => sleeveStats[stat] < options[`train-to-${stat}`]);
+                let untrainedStats = trainStats.filter(stat => sleeveStats[stat] < options[`train-to-${stat}`])
+					.sort((a, b) => {return sleeveStats[a] - sleeveStats[b]});
                 if (untrainedStats.length > 0) await promptForTrainingBudget(ns);
                 if (sync < 100) { // Synchronize
                     designatedTask = "synchronize";
