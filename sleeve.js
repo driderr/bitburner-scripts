@@ -1,22 +1,30 @@
-import { getNsDataThroughFile, formatMoney, formatDuration, disableLogs, log } from './helpers.js'
+import { getNsDataThroughFile, runCommand, formatMoney, formatDuration, disableLogs, log } from './helpers.js'
 
 const interval = 5000; // Uodate (tick) this often
 const minTaskWorkTime = 59000; // Sleeves assigned a new task should stick to it for at least this many milliseconds
 const tempFile = '/Temp/sleeve-set-task.txt';
 const works = ['security', 'field', 'hacking']; // When doing faction work, we prioritize physical work since sleeves tend towards having those stats be highest
+const trainStats = ['strength', 'defense', 'dexterity', 'agility'];
 let cachedCrimeStats; // Cache of crime statistics
 
 let options;
 const argsSchema = [
     ['min-shock-recovery', 97], // Minimum shock recovery before attempting to train or do crime (Set to 100 to disable, 0 to recover fully)
-    ['shock-recovery', 0],//0.05], // Set to a number between 0 and 1 to devote that ratio of time to periodic shock recovery (until shock is at 0)
+    ['shock-recovery', 0.05], // Set to a number between 0 and 1 to devote that ratio of time to periodic shock recovery (until shock is at 0)
     ['crime', null], // If specified, sleeves will perform only this crime regardless of stats
     ['homicide-chance-threshold', 0.5], // Sleeves will automatically start homicide once their chance of success succeeds this ratio
     ['aug-budget', 0.1], // Spend up to this much of current cash on augs per tick (Default is high, because these are permanent for the rest of the BN)
     ['buy-cooldown', 60 * 1000], // Must wait this may milliseconds before buying more augs for a sleeve
     ['min-aug-batch', 20], // Must be able to afford at least this many augs before we pull the trigger (or fewer if buying all remaining augs)
     ['reserve', null], // Reserve this much cash before determining spending budgets (defaults to contents of reserve.txt if not specified)
-    ['disable-follow-player', false], // Set to true to disable having Sleeve 0 work for the same faction/company as the player to boost rep gain.
+    ['disable-follow-player', false], // Set to true to disable having Sleeve 0 work for the same faction/company as the player to boost re
+    ['disable-training', false], // Set to true to disable having sleeves workout at the gym (costs money)
+    ['train-to-strength', 100], // Sleeves will go to the gym until they reach this much Str
+    ['train-to-defense', 100], // Sleeves will go to the gym until they reach this much Def
+    ['train-to-dexterity', 67], // Sleeves will go to the gym until they reach this much Dex
+    ['train-to-agility', 67], // Sleeves will go to the gym until they reach this much Agi
+    ['training-reserve', null], // Defaults to global reserve.txt. Can be set to a negative number to allow debt. Sleeves will not train if money is below this amount.
+    ['disable-spending-hashes-for-gym-upgrades', false], // Set to true to disable spending hashes on gym upgrades when training up sleeves.
 ];
 
 export function autocomplete(data, _) {
@@ -41,22 +49,26 @@ export async function main(ns) {
     }
     for (let i = 0; i < numSleeves; i++)
         availableAugs[i] = null;
-    var gymPid = 0;
+
     while (true) {
         try {
-            let cash = ns.getServerMoneyAvailable("home") - (options['reserve'] != null ? options['reserve'] : Number(ns.read("reserve.txt") || 0));
-            let budget = cash * options['aug-budget'];
             let playerInfo = await getNsDataThroughFile(ns, 'ns.getPlayer()', '/Temp/player-info.txt')
+            let globalReserve = Number(ns.read("reserve.txt") || 0);
+            let budget = (playerInfo.money - (options['reserve'] || globalReserve)) * options['aug-budget'];
+            // If any sleeve is training at the gym, see if we can purchase a gym upgrade to help them
+            let canTrain = !options['disable-training'] && playerInfo.money > (options['training-reserve'] ||
+                (promptedForTrainingBudget ? ns.read(trainingReserveFile) : undefined) || globalReserve);
+            if (canTrain && task.some(t => t.startsWith("train")) && !options['disable-spending-hashes-for-gym-upgrades'])
+                if (await getNsDataThroughFile(ns, 'ns.hacknet.spendHashes("Improve Gym Training")', '/Temp/spend-hashes-on-gym.txt'))
+                    log(ns, `SUCCESS: Bought "Improve Gym Training" to speed up Sleeve training.`, false, 'success');
+
+            // Update all sleeve stats and loop over all sleeves to do some individual checks and task assignments
             let allSleeveStats = await getNsDataThroughFile(ns, `[...Array(${numSleeves}).keys()].map(i => ns.sleeve.getSleeveStats(i))`, '/Temp/sleeve-stats.txt');
             for (let i = 0; i < numSleeves; i++) {
                 let sleeveStats = allSleeveStats[i];
                 let shock = sleeveStats.shock;
                 let sync = sleeveStats.sync;
-                let str = sleeveStats.strength;
-                let def = sleeveStats.defense;
-                let dex = sleeveStats.dexterity;
-                let agi = sleeveStats.agility;
-                // Manage Augmentations
+                // MANAGE SLEEVE AUGMENTATIONS
                 if (shock == 0 && availableAugs[i] == null) // No augs are available augs until shock is 0
                     availableAugs[i] = (await getNsDataThroughFile(ns, `ns.sleeve.getSleevePurchasableAugs(${i})`, '/Temp/sleeve-augs.txt')).sort((a, b) => a.cost - b.cost); // list of { name, cost }
                 if (shock == 0 && availableAugs[i].length > 0) {
@@ -77,12 +89,17 @@ export async function main(ns) {
                         lastPurchaseTime[i] = Date.now();
                     }
                 }
-                // Pick what we think the sleeve should be doing right now
+
+                // ASSIGN SLEEVE TASK
+                // If shock/sync just completed, and they were on that task, allow this sleeve to immediately be reassigned
+                if (shock == 0 && task[i] == "recover from shock" || sync == 100 && task[i] == "synchronize") lastReassignTime[i] = 0;
+                // Don't change tasks if we've changed tasks recently (avoids e.g. disrupting long crimes too frequently)
+                if (Date.now() - (lastReassignTime[i] || 0) < minTaskWorkTime) continue;
+
+                // Decide what we think the sleeve should be doing for the next little while
                 let command, designatedTask;
-                if (gymPid && str >= 100) {
-                    ns.kill(gymPid);
-                    gymPid = 0;
-                }
+                let untrainedStats = trainStats.filter(stat => sleeveStats[stat] < options[`train-to-${stat}`]);
+                if (untrainedStats.length > 0) await promptForTrainingBudget(ns);
                 if (sync < 100) { // Synchronize
                     designatedTask = "synchronize";
                     command = `ns.sleeve.setToSynchronize(${i})`;
@@ -90,28 +107,12 @@ export async function main(ns) {
                 else if (shock > options['min-shock-recovery'] || shock > 0 && options['shock-recovery'] > 0 && Math.random() < options['shock-recovery']) { // Recover from shock
                     designatedTask = "recover from shock";
                     command = `ns.sleeve.setToShockRecovery(${i})`;
-                } else if (str < 100) {
-                    if (!gymPid) {
-                        gymPid = ns.ps("home").filter(process => process.filename === "/abs/spend-hacknet-hashes.js" && process.args.includes("Improve Gym Training"))[0]?.pid ?? 0;
-                        if (!gymPid)
-                            gymPid = ns.run("/abs/spend-hacknet-hashes.js", 1, "--spend-on", "Improve Gym Training", "--liquidate");
-                    }
-                    command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "str")`;
-                    designatedTask = "gym str";
-                    if (dex <= str) {
-                        command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "dex")`;
-                        designatedTask = "gym dex";
-                    }
-                    if (agi <= dex) {
-                        command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "agi")`;
-                        designatedTask = "gym agi";
-                    }
-                    if (def <= agi) {
-                        command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "def")`;
-                        designatedTask = "gym def";
-                    }
-                    // If player is currently working for faction or company rep, sleeves 0 can help him out (Note: Only one sleeve can work for a faction)
-                } else if (i == 0 && !options['disable-follow-player'] && playerInfo.isWorking && playerInfo.workType == "Working for Faction") {
+                } // Train if our physical stats aren't up to par
+                else if (canTrain && untrainedStats.length > 0) {
+                    designatedTask = `train ${untrainedStats[0]}`;
+                    command = `ns.sleeve.setToGymWorkout(${i}, "Powerhouse Gym", "${untrainedStats[0]}")`;
+                } // If player is currently working for faction or company rep, sleeves 0 can help him out (Note: Only one sleeve can work for a faction)
+                else if (i == 0 && !options['disable-follow-player'] && playerInfo.isWorking && playerInfo.workType == "Working for Faction") {
                     // TODO: We should be able to borrow logic from work-for-factions.js to have more sleeves work for useful factions / companies
                     const work = works[workByFaction[playerInfo.currentWorkFactionName] || 0];
                     designatedTask = `work for faction '${playerInfo.currentWorkFactionName}' (${work})`;
@@ -126,19 +127,16 @@ export async function main(ns) {
                     command = `ns.sleeve.setToCommitCrime(${i}, '${crime}')`;
                 }
 
-                // If shock/sync just completed, and they were on that task, allow this sleeve to immediately be reassigned
-                if (shock == 0 && task[i] == "recover from shock" || sync == 100 && task[i] == "synchronize") lastReassignTime[i] = 0;
-                // Don't change tasks if we've changed tasks recently (avoids e.g. disrupting long crimes too frequently)
-                if (Date.now() - (lastReassignTime[i] || 0) < minTaskWorkTime) continue;
-
+                // Start the clock, this sleeve should stick to this task for minTaskWorkTime
+                lastReassignTime[i] = Date.now();
                 // Set the sleeve's new task if it's not the same as what they're already doing.
                 if (task[i] != designatedTask) {
                     let strAction = `Set sleeve ${i} to ${designatedTask}`;
                     if (await getNsDataThroughFile(ns, command, tempFile)) {
                         task[i] = designatedTask;
-                        lastReassignTime[i] = Date.now();
                         log(ns, `SUCCESS: ${strAction}`);
                     } else { // Assigning the task failed
+                        lastReassignTime[i] = 0;
                         // If working for a faction, it's possible he current work isn't supported, so try the next one.
                         if (designatedTask.startsWith('work for faction')) {
                             log(ns, `WARN: Failed to ${strAction} - work type may not be supported.`, false, 'warning');
@@ -171,6 +169,17 @@ export async function main(ns) {
         }
         await ns.asleep(interval);
     }
+}
+
+let promptedForTrainingBudget = false;
+async function promptForTrainingBudget(ns) {
+    if (promptedForTrainingBudget) return;
+    promptedForTrainingBudget = true;
+    const trainingReserveFile = '/Temp/sleeves-training-reserve.txt';
+    await ns.write(trainingReserveFile, '', "w");
+    if (options['training-reserve'] === null && !options['disable-training'])
+        await runCommand(ns, `let ans = await ns.prompt("Do you want to let sleeves put you in debt while they train?");\n` +
+            `await ns.write("${trainingReserveFile}", ans ? '-1E100' : '0', "w")`, '/Temp/sleeves-training-reserve-prompt.js');
 }
 
 // Calculate the chance a sleeve has of committing homicide successfully
