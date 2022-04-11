@@ -231,8 +231,9 @@ async function updateFactionData(ns, allFactions, factionsToOmit) {
         joined: joinedFactions.includes(faction),
         reputation: dictFactionReps[faction] || 0,
         favor: dictFactionFavors[faction],
-        donationsUnlocked: dictFactionFavors[faction] >= favorToDonate && faction !== gangFaction // Can't donate to gang factions for rep
-            && faction !== "Church of the Machine God", // Can't donate to this faction either
+        donationsUnlocked: dictFactionFavors[faction] >= favorToDonate &&
+            // As a rule, cannot donate to gang factions or any of the below factions - need to use other mechanics to gain rep.
+            ![gangFaction, "Bladeburners", "Church of the Machine God"].includes(faction),
         augmentations: dictFactionAugs[faction],
         unownedAugmentations: function (includeNf = false) { return this.augmentations.filter(aug => !simulatedOwnedAugmentations.includes(aug) && (aug != strNF || includeNf)) },
         mostExpensiveAugCost: function () { return this.augmentations.map(augName => augmentationData[augName]).reduce((max, aug) => Math.max(max, aug.price), 0) },
@@ -492,7 +493,7 @@ async function managePurchaseableAugs(ns, outputRows, accessibleAugs) {
         dropped = [];
         purchaseableAugs = accessibleAugs.slice().filter(a => !droppedPriorityAugs.includes(a.name) && a.price + getReqDonationForAug(a) <= budget);
         [purchaseFactionDonations, totalRepCost, totalAugCost] = computeCosts(purchaseableAugs);
-    // Remove the most expensive augmentation until we can afford all that remain
+        // Remove the most expensive augmentation until we can afford all that remain
         while (totalAugCost + totalRepCost > budget && purchaseableAugs.length > 0) {
             let mostExpensiveAug = purchaseableAugs.filter(a => !priorityAugs.includes(a.name)).slice().sort((a, b) => b.price - a.price)[0];
             if (!mostExpensiveAug) { // If there is nothing but "priority augs" left, then we need the user to deprioritize one or the other
@@ -504,12 +505,12 @@ async function managePurchaseableAugs(ns, outputRows, accessibleAugs) {
                 break;
             }
             let costBefore = getCostString(totalAugCost, totalRepCost);
-        purchaseableAugs = sortAugs(ns, purchaseableAugs.filter(aug => aug !== mostExpensiveAug));
+            purchaseableAugs = sortAugs(ns, purchaseableAugs.filter(aug => aug !== mostExpensiveAug));
             [purchaseFactionDonations, totalRepCost, totalAugCost] = computeCosts(purchaseableAugs);;
             let costAfter = getCostString(totalAugCost, totalRepCost);
-        dropped.unshift({ aug: mostExpensiveAug, costBefore, costAfter });
+            dropped.unshift({ aug: mostExpensiveAug, costBefore, costAfter });
             log(ns, `Dropping aug from the purchase order: \"${mostExpensiveAug.name}\". New total cost: ${costAfter}`);
-    }
+        }
     } while (restart);
     // Display the reduced list of affordable purchases as a separate section
     manageFilteredSubset(ns, outputRows, 'Affordable', purchaseableAugs, true);
@@ -521,7 +522,7 @@ async function managePurchaseableAugs(ns, outputRows, accessibleAugs) {
 
     // NEXT STEP: Add as many NeuroFlux levels to our purchase as we can (unless disabled)
     if (options['neuroflux-disabled']) return;
-        const augNf = augmentationData[strNF];
+    const augNf = augmentationData[strNF];
     // Prefer to purchase NF first from whatever joined factions can currently afford the next NF level, next from factions with donations unlocked
     //   (allow us to continuously donate for more), finally by faction with the most current reputation.
     augNf.getFromJoined = function () { // NOTE: Must be a function (not a lambda) so that `this` is bound to the augmentation object.
@@ -529,19 +530,19 @@ async function managePurchaseableAugs(ns, outputRows, accessibleAugs) {
             ((b.donationsUnlocked ? 1 : 0) - (a.donationsUnlocked ? 1 : 0)) || (b.reputation - a.reputation))[0]?.name;
     };
     if (!augNf.canAfford() && !augNf.canAffordWithDonation()) { // No currently joined factions can provide us with the next level of Neuroflux
-            const getFrom = augNf.getFromJoined();
-            outputRows.push(`Cannot purchase any ${strNF} because the next level requires ${formatNumberShort(augNf.reputation)} reputation, but ` +
-                (!getFrom ? `it isn't being offered by any of our factions` : `the best faction (${getFrom}) has insufficient rep (${formatNumberShort(factionData[getFrom].reputation)}).`));
-            const factionsWithAug = Object.values(factionData).filter(f => f.augmentations.includes(augNf.name)).sort((a, b) => b.favor - a.favor);
-            const factionsWithAugAndInvite = factionsWithAug.filter(f => f.invited || f.joined).sort((a, b) => b.favor - a.favor);
-            const factionWithMostFavor = factionsWithAugAndInvite[0] ?? factionsWithAug[0];
-            if (getFrom != factionsWithAug[0].name && factionsWithAug[0] != factionsWithAugAndInvite[0])
-                outputRows.push(`SUGGESTION: Earn an invitation to faction ${factionsWithAug[0].name} to make it easier to get rep for ${strNF} since it has the most favor (${factionsWithAug[0].favor}).`);
-            else if (factionsWithAug[0].joined && !factionsWithAug[0].donationsUnlocked)
-                outputRows.push(`SUGGESTION: Do some work for faction ${factionsWithAug[0].name} to qickly earn rep for ${strNF} since it has the most favor (${factionsWithAug[0].favor}).`);
-            else if ((!getFrom || factionData[getFrom].favor < factionWithMostFavor.favor) && factionWithMostFavor.invited) {
-                outputRows.push(`Attempting to join faction ${factionWithMostFavor.name} to make it easier to get rep for ${strNF} since it has the most favor (${factionWithMostFavor.favor}).`);
-                await joinFactions(ns, [factionWithMostFavor.name]);
+        const getFrom = augNf.getFromJoined();
+        outputRows.push(`Cannot purchase any ${strNF} because the next level requires ${formatNumberShort(augNf.reputation)} reputation, but ` +
+            (!getFrom ? `it isn't being offered by any of our factions` : `the best faction (${getFrom}) has insufficient rep (${formatNumberShort(factionData[getFrom].reputation)}).`));
+        const factionsWithAug = Object.values(factionData).filter(f => f.augmentations.includes(augNf.name)).sort((a, b) => b.favor - a.favor);
+        const factionsWithAugAndInvite = factionsWithAug.filter(f => f.invited || f.joined).sort((a, b) => b.favor - a.favor);
+        const factionWithMostFavor = factionsWithAugAndInvite[0] ?? factionsWithAug[0];
+        if (getFrom != factionsWithAug[0].name && factionsWithAug[0] != factionsWithAugAndInvite[0])
+            outputRows.push(`SUGGESTION: Earn an invitation to faction ${factionsWithAug[0].name} to make it easier to get rep for ${strNF} since it has the most favor (${factionsWithAug[0].favor}).`);
+        else if (factionsWithAug[0].joined && !factionsWithAug[0].donationsUnlocked)
+            outputRows.push(`SUGGESTION: Do some work for faction ${factionsWithAug[0].name} to qickly earn rep for ${strNF} since it has the most favor (${factionsWithAug[0].favor}).`);
+        else if (!getFrom || (factionData[getFrom].favor < factionWithMostFavor.favor && factionWithMostFavor.invited)) {
+            outputRows.push(`Attempting to join faction ${factionWithMostFavor.name} to make it easier to earn rep for ${strNF} since it has the most favor (${factionWithMostFavor.favor}).`);
+            await joinFactions(ns, [factionWithMostFavor.name]);
             if (!joinedFactions.includes(factionWithMostFavor.name)) {
                 invitedFactionsWithDonation = factionsWithAugAndInvite.filter(f => f.donationsUnlocked).map(f => f.name);
                 if (invitedFactionsWithDonation.length > 0) {
@@ -550,36 +551,40 @@ async function managePurchaseableAugs(ns, outputRows, accessibleAugs) {
                 } else
                     outputRows.push(`Failed to join ${factionWithMostFavor.name}. NeuroFlux will not be accessible.`);
             }
+            // If after the above potential attempt to join a faction offering NF we still can't afford it, we're done here
+            if (!augNf.getFromJoined())
+                return log(ns, "Cannot buy any NF due to no joined or joinable factions offering it.");
         }
-        // If after the above potential attempt to join a faction offering NF we still can't afford it, we're done here
-        if (!augNf.getFromJoined() && !augNf.canAfford() && !augNf.canAffordWithDonation())
-            return log("Cannot buy any NF due to no joined or joinable factions offering it.");
+        if (!augNf.canAfford() && !augNf.canAffordWithDonation())
+            return log(ns, `Cannot buy any NF due to best provider faction ${augNf.getFromJoined()} having insufficient rep, and donations are not unlocked.`);
     }
     // Start adding as many neuroflux levels as we can afford
-        let nfPurchased = purchaseableAugs.filter(a => a.name === augNf.name).length;
-        const augNfFaction = factionData[augNf.getFromJoined()];
-        log(ns, `nfPurchased: ${nfPurchased}, augNfFaction: ${augNfFaction.name} (rep: ${augNfFaction.reputation}), augNf.price: ${augNf.price}, augNf.reputation: ${augNf.reputation}`);
-        while (nfPurchased < 200) {
-            const nextNfCost = augNf.price * (augCountMult ** purchaseableAugs.length) * (nfCountMult ** nfPurchased);
-            const nextNfRep = augNf.reputation * (nfCountMult ** nfPurchased);
-            let nfMsg = `Cost of NF ${nfPurchased + 1} is ${formatMoney(nextNfCost)} and will require ${formatNumberShort(nextNfRep)} reputation`
-        if (totalAugCost + totalRepCost + nextNfCost + nextNfRep > budget) break;
-            purchaseableAugs.push(augNf);
-            totalAugCost += nextNfCost;
-            if (nextNfRep > augNfFaction.reputation) {
-                if (augNfFaction.donationsUnlocked) {
-                    purchaseFactionDonations[augNfFaction.name] = Math.max(purchaseFactionDonations[augNfFaction.name] || 0, getReqDonationForRep(nextNfRep, augNfFaction));
-                    totalRepCost = Object.values(purchaseFactionDonations).reduce((t, r) => t + r, 0);
-                    nfMsg += `, which will require a donation of ${formatMoney(purchaseFactionDonations[augNfFaction.name])} to faction ${augNfFaction.name}`
-                } else {
-                    outputRows.push(nfMsg + `, but we only have ${formatNumberShort(augNfFaction.reputation)} reputation with faction ${augNfFaction.name}!`);
-                    break;
-                }
-            } else
-                nfMsg += ` (✓ have ${formatNumberShort(augNfFaction.reputation)} rep with faction ${augNfFaction.name})`
-            log(ns, nfMsg);
-            nfPurchased++;
-        }
+    let nfPurchased = purchaseableAugs.filter(a => a.name === augNf.name).length;
+    const augNfFaction = factionData[augNf.getFromJoined()];
+    log(ns, `nfPurchased: ${nfPurchased}, augNfFaction: ${augNfFaction.name} (rep: ${augNfFaction.reputation}), augNf.price: ${augNf.price}, augNf.reputation: ${augNf.reputation}`);
+    while (nfPurchased < 200) { // Limit to 200 to avoid breaking the game if near infinite money.
+        const nextNfCost = augNf.price * (augCountMult ** purchaseableAugs.length) * (nfCountMult ** nfPurchased);
+        const nextNfRep = augNf.reputation * (nfCountMult ** nfPurchased);
+        const nextNfRepCost = (nextNfRep <= augNfFaction.reputation) ? 0 : // Compute the incremental cost of donating for rep
+            Math.max(0, purchaseFactionDonations[augNfFaction.name] || 0 - getReqDonationForRep(nextNfRep, augNfFaction));
+        let nfMsg = `Cost of NF ${nfPurchased + 1} is ${formatMoney(nextNfCost)} and will require ${formatNumberShort(nextNfRep)} reputation`
+        if (totalAugCost + totalRepCost + nextNfCost + nextNfRepCost > budget) break;
+        if (nextNfRep > augNfFaction.reputation) {
+            if (augNfFaction.donationsUnlocked) {
+                purchaseFactionDonations[augNfFaction.name] = Math.max(purchaseFactionDonations[augNfFaction.name] || 0, getReqDonationForRep(nextNfRep, augNfFaction));
+                totalRepCost = Object.values(purchaseFactionDonations).reduce((t, r) => t + r, 0);
+                nfMsg += `, which will require a donation of ${formatMoney(purchaseFactionDonations[augNfFaction.name])} to faction ${augNfFaction.name}`
+            } else {
+                outputRows.push(nfMsg + `, but we only have ${formatNumberShort(augNfFaction.reputation)} reputation with faction ${augNfFaction.name}!`);
+                break;
+            }
+        } else
+            nfMsg += ` (✓ have ${formatNumberShort(augNfFaction.reputation)} rep with faction ${augNfFaction.name})`
+        purchaseableAugs.push(augNf);
+        totalAugCost += nextNfCost;
+        log(ns, nfMsg);
+        nfPurchased++;
+    }
     log(ns, `Can afford to purchase ${nfPurchased} levels of ${strNF}. New total cost: ${getCostString(totalAugCost, totalRepCost)}`);
     outputRows.push(`Total Cost of ${purchaseableAugs.length} (${purchaseableAugs.length - nfPurchased} Augs + ${nfPurchased} NF):`.padEnd(38) +
         getCostString(totalAugCost, totalRepCost) + (totalRepCost == 0 ? '' : `  Donate: ${JSON.stringify(purchaseFactionDonations).replaceAll(",", ", ")}`));
