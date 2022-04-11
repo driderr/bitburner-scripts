@@ -25,8 +25,8 @@ const argsSchema = [
     ['disable-training', false], // Set to true to disable having sleeves workout at the gym (costs money)
     ['train-to-strength', 100], // Sleeves will go to the gym until they reach this much Str
     ['train-to-defense', 100], // Sleeves will go to the gym until they reach this much Def
-    ['train-to-dexterity', 67], // Sleeves will go to the gym until they reach this much Dex
-    ['train-to-agility', 67], // Sleeves will go to the gym until they reach this much Agi
+    ['train-to-dexterity', 100], // Sleeves will go to the gym until they reach this much Dex
+    ['train-to-agility', 100], // Sleeves will go to the gym until they reach this much Agi
     ['training-reserve', null], // Defaults to global reserve.txt. Can be set to a negative number to allow debt. Sleeves will not train if money is below this amount.
     ['disable-spending-hashes-for-gym-upgrades', false], // Set to true to disable spending hashes on gym upgrades when training up sleeves.
 ];
