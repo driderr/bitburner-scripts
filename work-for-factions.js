@@ -1,5 +1,5 @@
 import {
-    getNsDataThroughFile, runCommand, getActiveSourceFiles, tryGetBitNodeMultipliers,
+    getNsDataThroughFile, getFilePath, getActiveSourceFiles, tryGetBitNodeMultipliers,
     formatDuration, formatMoney, formatNumberShort, disableLogs, log
 } from './helpers.js'
 
@@ -11,7 +11,8 @@ const argsSchema = [
     ['desired-stats', []], // Factions will be removed from our 'early-faction-order' once all augs with these stats have been bought out
     ['no-focus', false], // Disable doing work that requires focusing (crime), and forces study/faction/company work to be non-focused (even if it means incurring a penalty)
     ['no-studying', false], // Disable studying.
-    ['pay-for-studies-threshold', 100E6], // Only be willing to pay for our studies if we have this much money
+    ['pay-for-studies-threshold', 200000], // Only be willing to pay for our studies if we have this much money
+    ['training-stat-per-multi-threshold', 50], // Heuristic: Only bother training stats if our mult/exp_mult for that stat are more than 1 per this many (50) stat levels we need.
     ['no-coding-contracts', false], // Disable purchasing coding contracts for reputation
     ['no-crime', false], // Disable doing crimes at all. (Also disabled with --no-focus)
     ['crime-focus', false], // Useful in crime-focused BNs when you want to focus on crime related factions
@@ -387,7 +388,7 @@ async function earnFactionInvite(ns, factionName) {
         && !(reqHackingOrCombat.includes(factionName) && player.hacking >= requiredHackByFaction[factionName])) { // Some special-case factions (just 'Daedalus' for now) require *either* hacking *or* combat
         ns.print(`${reasonPrefix} you have insufficient combat stats. Need: ${requirement} of each, ` +
             `Have Str: ${player.strength}, Def: ${player.defense}, Dex: ${player.dexterity}, Agi: ${player.agility}`);
-        const em = requirement / 50; // Hack: A rough heuristic suggesting we need an additional x1 multi for every ~50 pysical stat points we wish to grind out in a reasonable amount of time. TODO: Be smarter
+        const em = requirement / options['training-stat-per-multi-threshold']; // Hack: A rough heuristic suggesting we need an additional x1 multi for every ~50 pysical stat points we wish to grind out in a reasonable amount of time. TODO: Be smarter
         if (!options['crime-focus'] && (player.strength_exp_mult * player.strength_mult < em || player.defense_exp_mult * player.defense_mult < em ||
             player.dexterity_exp_mult * player.dexterity_mult < em || player.agility_exp_mult * player.agility_mult < em))
             return ns.print("Physical mults / exp_mults are too low to increase stats in a reasonable amount of time");
@@ -398,30 +399,49 @@ async function earnFactionInvite(ns, factionName) {
     if (doCrime)
         workedForInvite = await crimeForKillsKarmaStats(ns, requiredKillsByFaction[factionName] || 0, requiredKarmaByFaction[factionName] || 0, requiredCombatByFaction[factionName] || 0);
 
-    // Skip factions for which money/hack level requirements aren't met. We do not attempt to "train up" for these things (happens automatically outside this script)
-    if ((requirement = requiredMoneyByFaction[factionName]) && player.money < requirement)
-        return ns.print(`${reasonPrefix} you have insufficient money. Need: ${formatMoney(requirement)}, Have: ${formatMoney(player.money)}`);
-    if ((requirement = requiredHackByFaction[factionName]) && player.hacking < requirement && !reqHackingOrCombat.includes(factionName)) {
+    // Study for hack levels if that's what's keeping us
+    // Note: Check if we have insuffient hack to backdoor this faction server. If we have sufficient hack, we will "waitForInvite" below assuming an external script is backdooring ASAP 
+    let serverReqHackingLevel = 0;
+    if (requirement = requiredBackdoorByFaction[factionName]) {
+        serverReqHackingLevel = await getServerRequiredHackLevel(ns, requirement);
+        if (player.hacking < serverReqHackingLevel) {
+            ns.print(`${reasonPrefix} you must fist backdoor ${requirement}, which needs hack: ${serverReqHackingLevel}, Have: ${player.hacking}`);
+        }
+    }
+    requirement = Math.max(serverReqHackingLevel, requiredHackByFaction[factionName] || 0)
+    if (requirement && player.hacking < requirement) {
         ns.print(`${reasonPrefix} you have insufficient hack level. Need: ${requirement}, Have: ${player.hacking}`);
-        const em = requirement / 50; // Hack: A rough heuristic suggesting we need an additional x1 multi for every ~50 pysical stat points we wish to grind out in a reasonable amount of time. TODO: Be smarter
-        if (player.hacking_exp_mult * player.hacking_mult < em)
+        const em = requirement / options['training-stat-per-multi-threshold'];
+        if (options['no-studying'])
+            return ns.print(`--no-studying is set, nothing we can do to improve hack level.`);
+        else if (player.hacking_exp_mult * player.hacking_mult < em)
             return ns.print(`Hacking mult ${formatNumberShort(player.hacking_mult)} and exp_mult ${formatNumberShort(player.hacking_exp_mult)} ` +
                 `are probably too low to increase hack from ${player.hacking} to ${requirement} in a reasonable amount of time.`);
+        let studying = false;
         if (player.money > options['pay-for-studies-threshold']) { // If we have sufficient money, pay for the best studies
             if (player.city != "Volhaven") await goToCity(ns, "Volhaven");
-            workedForInvite = await study(ns, false, "Algorithms");
+            studying = await study(ns, false, "Algorithms");
         } else if (uniByCity[player.city]) // Otherwise only go to free university if our city has a university
-            workedForInvite = await study(ns, false, "Computer Science");
+            studying = await study(ns, false, "Study Computer Science");
         else
             return ns.print(`You have insufficient money (${formatMoney(player.money)} < --pay-for-studies-threshold ${formatMoney(options['pay-for-studies-threshold'])})` +
                 ` to travel or pay for studies, and your current city ${player.city} does not have a university from which to take free computer science.`);
+        if (studying)
+            workedForInvite = await monitorStudies(ns, 'hacking', requirement);
+        // If we studied for hacking, and were awaiting a backdoor, spawn the backdoor script now  
+        if (workedForInvite && serverReqHackingLevel) {
+            player = await getPlayerInfo(ns);
+            if (player.hacking > requirement) {
+                ns.print(`Current hacking level ${player.hacking} seems to now meet the backdoor requirement ${requirement}. Spawning backdoor-all-servers.js...`);
+                ns.run(getFilePath("/Tasks/backdoor-all-servers.js"));
+            }
+        }
     }
-    // Note: This only complains if we have insuffient hack to backdoor this faction server. If we have sufficient hack, we will "waitForInvite" below assuming an external script is backdooring ASAP 
-    let serverReqHackingLevel;
-    if ((requirement = requiredBackdoorByFaction[factionName]) && player.hacking < (serverReqHackingLevel = (await getServerRequiredHackLevel(ns, requirement))))
-        return ns.print(`${reasonPrefix} you must fist backdoor ${requirement}, which needs hack: ${serverReqHackingLevel}, Have: ${player.hacking}`);
-    //await getNsDataThroughFile(ns, `ns.connect('fulcrumassets'); await ns.installBackdoor(); ns.connect(home)`, '/Temp/backdoor-fulcrum.txt') // TODO: Do backdoor if we can but haven't yet?
     if (breakToMainLoop()) return false;
+
+    // Skip factions whose remaining requirement is money. There's not much we can do to earn money
+    if ((requirement = requiredMoneyByFaction[factionName]) && player.money < requirement)
+        return ns.print(`${reasonPrefix} you have insufficient money. Need: ${formatMoney(requirement)}, Have: ${formatMoney(player.money)}`);
 
     // If travelling can help us join a faction - we can do that too
     player = await getPlayerInfo(ns);
@@ -436,6 +456,7 @@ async function earnFactionInvite(ns, factionName) {
         workedForInvite = true;
         player = await getPlayerInfo(ns);
     }
+
     // Special case, earn a CEO position to gain an invite to Silhouette
     if ("Silhouette" == factionName) {
         ns.print(`You must be a CO (e.g. CEO/CTO) of a company to earn an invite to ${factionName}. This may take a while!`);
@@ -471,7 +492,7 @@ async function goToCity(ns, cityName) {
     if (player.money < 200000)
         announce(ns, `WARN: Insufficient funds to travel from ${player.city} to ${cityName}`, 'warning');
     else
-        announce(ns, `ERROR: Failed to travelled from ${player.city} to ${cityName} for some reason...`, 'error');
+        announce(ns, `ERROR: Failed to travel from ${player.city} to ${cityName} for some reason...`, 'error');
     return false;
 }
 
@@ -522,22 +543,43 @@ const uniByCity = Object.fromEntries([["Aevum", "Summit University"], ["Sector-1
 
 /** @param {NS} ns */
 async function study(ns, focus, course, university = null) {
+    if (options['no-studying'])
+        return announce(ns, `WARNING: Could not study '${course}' because --no-studying is set.`, 'warning');
+    const playerCity = (await getPlayerInfo(ns)).city;
     if (!university) { // Auto-detect the university in our city
-        const playerCity = (await getPlayerInfo(ns)).city;
         university = uniByCity[playerCity];
-        if (!university) {
-            announce(ns, `WARNING: Could not study ${course} because we are in city ${playerCity} without a university.`, 'warning');
-            return false;
-        }
+        if (!university)
+            return announce(ns, `WARNING: Could not study '${course}' because we are in city '${playerCity}' without a university.`, 'warning');
     }
     if (await getNsDataThroughFile(ns, `ns.universityCourse('${university}', '${course}', ${focus})`, '/Temp/study.txt')) {
         lastActionRestart = Date.now();
         announce(ns, `Started studying '${course}' at '${university}`, 'success');
         return true;
     }
-    announce(ns, `For some reason, failed to study at university (not in correct city?)`, 'error');
+    announce(ns, `ERROR: For some reason, failed to study '${course}' at university '${university}' (Not in correct city? Player is in '${playerCity}')`, 'error');
     return false;
 }
+
+/** @param {NS} ns
+ * Helper to wait for studies to be complete */
+async function monitorStudies(ns, stat, requirement) {
+    let lastStatusUpdateTime = 0;
+    while (!breakToMainLoop()) {
+        const player = await getPlayerInfo(ns);
+        if (!player.className)
+            return announce(ns, 'WARNING: Somebody interrupted our studies.', 'warning');
+        if (player[stat] >= requirement) {
+            announce(ns, `SUCCESS: Achieved ${stat} level ${player[stat]} >= ${requirement} while studying`);
+            return true;
+        }
+        if ((Date.now() - lastStatusUpdateTime) > statusUpdateInterval) {
+            lastStatusUpdateTime = Date.now();
+            announce(ns, `Studying until ${stat} reaches ${requirement}. Currently at ${player[stat]}...`)
+        }
+        await ns.sleep(loopSleepInterval);
+    }
+}
+
 
 /** @param {NS} ns */
 export async function waitForFactionInvite(ns, factionName, maxWaitTime = 20000) {
