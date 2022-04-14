@@ -1,31 +1,25 @@
-import { getNsDataThroughFile, runCommand } from './helpers.js'
+import { getNsDataThroughFile, runCommand, formatRam } from './helpers.js'
 
-/** @param {NS} ns 
- *  Remove the worst server we own (RAM) **/
+/** @param {NS} ns
+ * Remove the worst owned server respective of RAM */
 export async function main(ns) {
-    let worstServerName = null;
-    let worstServerRam = Math.pow(2, 20);
-    let purchasedServers = await getNsDataThroughFile(ns, 'ns.getPurchasedServers()', '/Temp/purchased-servers.txt');
-    if (purchasedServers.length == 0) {
-        ns.tprint("Nothing to delete - you have purchased no servers.");
-        return;
-    }
-    purchasedServers.forEach(serverName => {
-        let ram = ns.getServerMaxRam(serverName);
-        if (ram < worstServerRam) {
-            worstServerName = serverName;
-            worstServerRam = ram;
-        }
-    });
-    if (worstServerName == null) {
-        ns.tprint("Nothing to delete - all " + purchasedServers.length + " servers have the maximum " + worstServerRam + " GB of RAM");
-        return;
-    }
+    const purchasedServers = await getNsDataThroughFile(ns, 'ns.getPurchasedServers()', '/Temp/purchased-servers.txt');
+    if (purchasedServers.length === 0)
+        return ns.tprint("Nothing to delete - you have purchased no servers.");
+
+    const minServer = purchasedServers.reduce((minServer, currServer) => {
+        const currRam = ns.getServerMaxRam(currServer);
+        return minServer.ram > currRam ? { name: currServer, ram: currRam } : minServer;
+    }, { name: null, ram: Number.MAX_VALUE });
+
+    if (!minServer.name)
+        return ns.tprint(`Nothing to delete - all ${purchasedServers.length} servers have the maximum RAM (2^20 or ${formatRam(2 ** 20)})`);
+
     // Flag the server for deletion with a file - daemon should check for this and stop scheduling against it.
-    await runCommand(ns, `await ns.scp("/Flags/deleting.txt", "${worstServerName}")`, '/Temp/flag-server-for-deletion.js');
-    var success = await getNsDataThroughFile(ns, `ns.deleteServer("${worstServerName}")`, '/Temp/try-delete-server-result.txt');
+    await runCommand(ns, `await ns.scp("/Flags/deleting.txt", ns.args[0])`, '/Temp/flag-server-for-deletion.js', [minServer.name]);
+    const success = await getNsDataThroughFile(ns, `ns.deleteServer(ns.args[0])`, '/Temp/deleteServer.txt', [minServer.name]);
     if (success)
-        ns.tprint("Deleted " + worstServerName + " which had only " + worstServerRam + " GB of RAM. " + (purchasedServers.length - 1) + " servers remain.");
+        ns.tprint(`Deleted ${minServer.name} which had ${formatRam(minServer.ram)} of RAM (${purchasedServers.length - 1} servers remaining).`);
     else
-        ns.tprint("Tried to delete " + worstServerName + " with " + worstServerRam + " GB RAM, but it failed (scripts still running)");
+        ns.tprint(`Failed to delete ${minServer.name} (${formatRam(minServer.ram)} of RAM) - scripts are likely still running`);
 }

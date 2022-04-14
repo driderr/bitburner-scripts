@@ -1,5 +1,5 @@
 import {
-    getNsDataThroughFile, getFilePath, getActiveSourceFiles, tryGetBitNodeMultipliers,
+    instanceCount, getNsDataThroughFile, getFilePath, getActiveSourceFiles, tryGetBitNodeMultipliers,
     formatDuration, formatMoney, formatNumberShort, disableLogs, log
 } from './helpers.js'
 
@@ -96,6 +96,7 @@ const breakToMainLoop = () => Date.now() > mainLoopStart + checkForNewPriorities
 
 /** @param {NS} ns */
 export async function main(ns) {
+    if (await instanceCount(ns) > 1) return; // Prevent multiple instances of this script from being started, even with different args.
     disableLogs(ns, ['sleep']);
 
     // Reset globals whose value can persist between script restarts in weird situations
@@ -409,7 +410,9 @@ async function earnFactionInvite(ns, factionName) {
         }
     }
     requirement = Math.max(serverReqHackingLevel, requiredHackByFaction[factionName] || 0)
-    if (requirement && player.hacking < requirement) {
+    if (requirement && player.hacking < requirement &&
+        // Special case (Daedalus): Don't grind for hack requirement if we previously did a grind for the physical requirements
+        !(reqHackingOrCombat.includes(factionName) && workedForInvite)) {
         ns.print(`${reasonPrefix} you have insufficient hack level. Need: ${requirement}, Have: ${player.hacking}`);
         const em = requirement / options['training-stat-per-multi-threshold'];
         if (options['no-studying'])
@@ -496,13 +499,11 @@ async function goToCity(ns, cityName) {
     return false;
 }
 
-/** @param {NS} ns 
- *  @param {function} crimeCommand if you want to commit the RAM footprint, you can pass in ns.commitCrime, otherise it will run via ram-dodging getNsDataThroughFile */
-export async function crimeForKillsKarmaStats(ns, reqKills, reqKarma, reqStats, crimeCommand = null, doFastCrimesOnly = false) {
+/** @param {NS} ns */
+export async function crimeForKillsKarmaStats(ns, reqKills, reqKarma, reqStats, doFastCrimesOnly = false) {
     const bestCrimesByDifficulty = ["heist", "assassinate", "homicide", "mug"]; // Will change crimes as our success rate improves
     const chanceThresholds = [0.75, 0.9, 0.5, 0]; // Will change crimes once we reach this probability of success for better all-round gains
-    doFastCrimesOnly = doFastCrimesOnly || options ? options['fast-crimes-only'] : false;
-    if (!crimeCommand) crimeCommand = async crime => await getNsDataThroughFile(ns, `ns.commitCrime('${crime}')`, '/Temp/crime-time.txt');
+    doFastCrimesOnly = doFastCrimesOnly || (options ? options['fast-crimes-only'] : false);
     let player = await getPlayerInfo(ns);
     let strRequirements = [];
     let forever = reqKills >= Number.MAX_SAFE_INTEGER || reqKarma >= Number.MAX_SAFE_INTEGER || reqStats >= Number.MAX_SAFE_INTEGER;
@@ -524,7 +525,7 @@ export async function crimeForKillsKarmaStats(ns, reqKills, reqKarma, reqStats, 
             lastStatusUpdateTime = Date.now();
         }
         ns.tail(); // Force a tail window open when auto-criming, or else it's very difficult to stop if it was accidentally closed.
-        await ns.sleep(await crimeCommand(crime));
+        await ns.sleep(1 + (await getNsDataThroughFile(ns, 'ns.commitCrime(ns.args[0])', '/Temp/commitCrime.txt', [crime])));
         while ((player = (await getPlayerInfo(ns))).crimeType == `commit ${crime}` || player.crimeType == crime) // If we woke up too early, wait a little longer for the crime to finish
             await ns.sleep(10);
         crimeCount++;
