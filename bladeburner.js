@@ -1,4 +1,4 @@
-import { log, disableLogs, getNsDataThroughFile, runCommand, getActiveSourceFiles, formatNumberShort, formatDuration } from './helpers.js'
+import { log, disableLogs, getNsDataThroughFile, getFilePath, getActiveSourceFiles, formatNumberShort, formatDuration } from './helpers.js'
 
 const cityNames = ["Sector-12", "Aevum", "Volhaven", "Chongqing", "New Tokyo", "Ishima"];
 const antiChaosOperation = "Stealth Retirement Operation"; // Note: Faster and more effective than Diplomacy at reducing city chaos
@@ -20,7 +20,7 @@ const costAdjustments = {
 
 // Some bladeburner info gathered at startup and cached
 let skillNames, generalActionNames, contractNames, operationNames, remainingBlackOpsNames, blackOpsRanks;
-let inFaction, haveSimulacrum, lastBlackOpReady, lowStaminaTriggered, timesTrained, currentTaskEndTime, maxRankNeeded;
+let inFaction, haveSimulacrum, lastBlackOpReady, lowStaminaTriggered, timesTrained, currentTaskEndTime, maxRankNeeded, lastAssignedTask;
 let player, ownedSourceFiles;
 let options;
 const argsSchema = [
@@ -37,6 +37,7 @@ const argsSchema = [
     ['ignore-busy-status', false], // If set to true, we will attempt to do bladeburner tasks even if we are currently busy and don't have The Blade's Simulacrum
     ['allow-raiding-highest-pop-city', false], // Set to true, we will allow Raid to be used even in our highest-population city (disabled by default)
     ['reserved-action-count', 200], // Some operation types are "reserved" for chaos reduction / population estimate increase. Start by reserving this many, reduced automatically as we approach maxRankNeeded
+    ['disable-spending-hashes', false], // Set to true to not spawn spend-hacknet-hashes.js to spend hashes on bladeburner
 ];
 export function autocomplete(data, _) {
     data.flags(argsSchema);
@@ -96,12 +97,14 @@ async function gatherBladeburnerInfo(ns) {
     const blackOpsToBeDone = await getBBDictByActionType(ns, 'getActionCountRemaining', "blackops", blackOpsNames);
     remainingBlackOpsNames = blackOpsNames.filter(n => blackOpsToBeDone[n] === 1)
         .sort((b1, b2) => blackOpsRanks[b1] - blackOpsRanks[b2]);
-    log(ns, `INFO: There are ${remainingBlackOpsNames.length} remaining BlackOps operations to complete in order:\n` +
+    log(ns, `There are ${remainingBlackOpsNames.length} remaining BlackOps operations to complete in order:\n` +
         remainingBlackOpsNames.map(n => `${n} (${blackOpsRanks[n]})`).join(", "));
     maxRankNeeded = blackOpsRanks[remainingBlackOpsNames[remainingBlackOpsNames.length - 1]];
     // Check if we have the aug that lets us do bladeburner while otherwise busy
-    haveSimulacrum = await getNsDataThroughFile(ns, `ns.getOwnedAugmentations().includes("${simulacrumAugName}")`, '/Temp/bladeburner-hasSimulacrum.txt');
+    haveSimulacrum = !(4 in ownedSourceFiles) ? true : // If player doesn't have SF4, we cannot check, so hope for the best.
+        await getNsDataThroughFile(ns, `ns.getOwnedAugmentations().includes("${simulacrumAugName}")`, '/Temp/bladeburner-hasSimulacrum.txt');
     // Initialize some flags that may change over time
+    lastAssignedTask = null;
     lastBlackOpReady = false; // Flag will track whether we've notified the user that the last black-op is ready
     lowStaminaTriggered = false; // Flag will track whether we've previously switched to stamina recovery to reduce noise
     timesTrained = 0; // Count of how many times we've trained (capped at --training-limit)
@@ -299,12 +302,22 @@ async function mainLoop(ns) {
 
     // Detect our current action (API returns an object like { "type":"Operation", "name":"Investigation" })
     const currentAction = await getBBInfo(ns, `getCurrentAction()`);
-    if (currentAction?.name) {
+    // Warn the user if it looks like a task was interrupted by something else (user activity or bladeburner automation). Ignore if our last assigned task has run out of actions.
+    if (lastAssignedTask && lastAssignedTask != currentAction?.name && getCount(lastAssignedTask) > 0) {
+        log(ns, `WARNING: The last task this script assigned was "${lastAssignedTask}", but you're now doing "${currentAction?.name || '(nothing)'}". ` +
+            `Have you been using Bladeburner Automation? If so, try typing "automate dis" in the Bladeburner Console.`, false, 'warning');
+    } else if (currentAction?.name) {
+        const currentDuration = await getBBInfo(ns, `getActionTime(ns.args[0], ns.args[1])`, currentAction.type, currentAction.name);
+        if (!lastAssignedTask) { // Leave a log acknowledging if we just started up and there was an activity already underway.
+            log(ns, `INFO: At startup, Bladeburner was already doing "${currentAction?.name}", ` +
+                (bestActionName != currentAction.name ? `but we would prefer to do "${bestActionName}", so we will be switching.` :
+                    `which is what we were planning to do, so we will leave the current task alone.`));
+            lastAssignedTask = bestActionName;
+        }
         // Normally, we don't switch tasks if our previously assigned task hasn't had time to complete once.
         // EXCEPTION: Early after a reset, this time is LONG, and in a few seconds it may be faster to just stop and restart it.
-        const currentDuration = await getBBInfo(ns, `getActionTime(ns.args[0], ns.args[1])`, currentAction.type, currentAction.name);
         if (currentDuration < currentTaskEndTime - Date.now()) {
-            log(ns, `INFO: ${bestActionName == currentAction.name ? 'Restarting' : 'Cancelling'} action ${currentAction.name} because its new duration ` +
+            log(ns, `INFO: ${bestActionName == currentAction.name ? 'Restarting' : 'Cancelling'} action "${currentAction.name}" because its new duration ` +
                 `is less than the time remaining (${formatDuration(currentDuration)} < ${formatDuration(currentTaskEndTime - Date.now())})`);
         } else if (Date.now() < currentTaskEndTime || bestActionName == currentAction.name) return;
     } // Otherwise prior action was stopped or ended and no count remain, so we should start a new one regardless of expected currentTaskEndTime
@@ -318,7 +331,8 @@ async function mainLoop(ns) {
         `INFO: Switched to Bladeburner ${bestActionType} "${bestActionName}" (${reason}). ETA: ${formatDuration(expectedDuration)}`),
         !success, success ? (options['toast-operations'] ? 'info' : undefined) : 'error');
     // Ensure we perform this new action at least once before interrupting it
-    currentTaskEndTime = !success ? 0 : Date.now() + expectedDuration + 200; // Pad this a little to ensure we don't interrupt it.
+    lastAssignedTask = bestActionName;
+    currentTaskEndTime = !success ? 0 : Date.now() + expectedDuration + 10; // Pad this a little to ensure we don't interrupt it.
 }
 
 /** @param {NS} ns 
@@ -391,10 +405,11 @@ async function beingInBladeburner(ns) {
             if (player.strength < 100 || player.defense < 100 || player.dexterity < 100 || player.agility < 100)
                 log(ns, `Waiting for physical stats >100 to join bladeburner ` +
                     `(Currently Str: ${player.strength}, Def: ${player.defense}, Dex: ${player.dexterity}, Agi: ${player.agility})`);
-            else if (await getNsDataThroughFile(ns, 'ns.bladeburner.joinBladeburnerDivision()', '/Temp/bladeburner-join.txt')) {
+            else if (await getBBInfo(ns, 'joinBladeburnerDivision()')) {
                 let message = `SUCCESS: Joined Bladeburner (At ${formatDuration(player.playtimeSinceLastBitnode)} into BitNode)`;
-                if (9 in ownedSourceFiles) message += ' Consider running the following command to give it a boost:\n' +
-                    'run spend-hacknet-hashes.js --spend-on Exchange_for_Bladeburner_Rank --spend-on Exchange_for_Bladeburner_SP --liquidate';
+                if (9 in ownedSourceFiles && options['disable-spending-hashes'])
+                    message += ' --disable-spending-hashes is set, but consider running the following command to give it a boost:\n' +
+                        'run spend-hacknet-hashes.js --spend-on Exchange_for_Bladeburner_Rank --spend-on Exchange_for_Bladeburner_SP --liquidate';
                 log(ns, message, true, 'success');
                 break;
             } else
@@ -405,4 +420,13 @@ async function beingInBladeburner(ns) {
         await ns.asleep(5000);
     }
     log(ns, "INFO: We are in Bladeburner. Starting main loop...")
+    // If not disabled, launch an external script to spend hashes on bladeburner rank
+    if (options['disable-spending-hashes'] || !(9 in ownedSourceFiles)) return;
+    const fPath = getFilePath('spend-hacknet-hashes.js');
+    const args = ['--spend-on', 'Exchange_for_Bladeburner_Rank', '--spend-on', 'Exchange_for_Bladeburner_SP', '--liquidate'];
+    if (ns.run(fPath, 1, ...args))
+        log(ns, `INFO: Launched '${fPath}' to gain Bladeburner Rank and Skill Points more quickly (Can be disabled with --disable-spending-hashes)`)
+    else
+        log(ns, `WARNING: Failed to launch '${fPath}' (already running?)`)
+
 }
