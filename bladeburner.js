@@ -37,7 +37,7 @@ const argsSchema = [
     ['ignore-busy-status', false], // If set to true, we will attempt to do bladeburner tasks even if we are currently busy and don't have The Blade's Simulacrum
     ['allow-raiding-highest-pop-city', false], // Set to true, we will allow Raid to be used even in our highest-population city (disabled by default)
     ['reserved-action-count', 200], // Some operation types are "reserved" for chaos reduction / population estimate increase. Start by reserving this many, reduced automatically as we approach maxRankNeeded
-    ['disable-spending-hashes', false], // Set to true to not spawn spend-hacknet-hashes.js to spend hashes on bladeburner
+    ['disable-spending-hashes', true], // Set to true to not spawn spend-hacknet-hashes.js to spend hashes on bladeburner
 ];
 export function autocomplete(data, _) {
     data.flags(argsSchema);
