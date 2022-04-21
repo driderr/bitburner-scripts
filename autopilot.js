@@ -1,6 +1,6 @@
 import {
 	log, getFilePath, instanceCount, getNsDataThroughFile, waitForProcessToComplete,
-	getActiveSourceFiles, tryGetBitNodeMultipliers,
+	getActiveSourceFiles, tryGetBitNodeMultipliers, getStocksValue,
 	formatMoney, formatDuration
 } from './helpers.js'
 
@@ -20,9 +20,14 @@ const argsSchema = [ // The set of all command line arguments
 	['high-hack-threshold', 8000], // Once hack level reaches this, we start daemon in high-performance hacking mode
 	['enable-bladeburner', false], // Set to true to allow bladeburner progression (probably slows down BN completion)
 	['wait-for-4s', true], // If true, will not reset until the 4S Tix API has been acquired (major source of income early on, especially in harder nodes)
+	['on-completion-script', null], // Spawn this script when we defeat the bitnode
+	['on-completion-script-args', []], // Optional args to pass to the script when we defeat the bitnode
 ];
 export function autocomplete(data, args) {
 	data.flags(argsSchema);
+	const lastFlag = args.length > 1 ? args[args.length - 2] : null;
+	if (["--on-completion-script"].includes(lastFlag))
+		return data.scripts;
 	return [];
 }
 
@@ -33,7 +38,7 @@ let reservedPurchase; // Flag to indicate whether we've reservedPurchase money a
 let reserveForDaedalus, daedalusUnavailable; // Flags to indicate that we should be keeping 100b cash on hand to earn an invite to Daedalus
 let lastScriptsCheck; // Last time we got a listing of all running scripts
 let killScripts; // A list of scripts flagged to be restarted due to changes in priority
-let dictSourceFiles, bitnodeMults, playerInstalledAugCount; // Info for the current bitnode
+let dictOwnedSourceFiles, unlockedSFs, bitnodeMults, playerInstalledAugCount; // Info for the current bitnode
 let daemonStartTime; // The time we personally launched daemon.
 
 /** @param {NS} ns **/
@@ -51,8 +56,9 @@ export async function main(ns) {
 	// Collect and cache some one-time data
 	const player = await getNsDataThroughFile(ns, 'ns.getPlayer()', '/Temp/getPlayer.txt');
 	bitnodeMults = await tryGetBitNodeMultipliers(ns);
-	dictSourceFiles = await getActiveSourceFiles(ns, true);
-	if (!(4 in dictSourceFiles))
+	dictOwnedSourceFiles = await getActiveSourceFiles(ns, false);
+	unlockedSFs = await getActiveSourceFiles(ns, true);
+	if (!(4 in unlockedSFs))
 		log(ns, `WARNING: This script requires SF4 (singularity) functions to assess purchasable augmentations ascend automatically. ` +
 			`Some functionality will be diabled and you'll have to manage working for factions, purchasing, and installing augmentations yourself.`, true);
 	if (player.playtimeSinceLastBitnode < 60 * 1000) // Skip initialization if we've been in the bitnode for more than 1 minute
@@ -81,8 +87,9 @@ async function initializeNewBitnode(ns) {
  * @param {NS} ns */
 async function mainLoop(ns) {
 	const player = await getNsDataThroughFile(ns, 'ns.getPlayer()', '/Temp/getPlayer.txt');
-	await manageReservedMoney(ns, player);
-	await checkOnDaedalusStatus(ns, player);
+	const stocksValue = await getStocksValue(ns, player);
+	await manageReservedMoney(ns, player, stocksValue);
+	await checkOnDaedalusStatus(ns, player, stocksValue);
 	await checkIfBnIsComplete(ns, player);
 	await checkOnRunningScripts(ns, player);
 	await maybeDoCasino(ns, player);
@@ -92,7 +99,7 @@ async function mainLoop(ns) {
 /** Logic run periodically to if there is anything we can do to speed along earning a Daedalus invite
  * @param {NS} ns
  * @param {Player} player **/
-async function checkOnDaedalusStatus(ns, player) {
+async function checkOnDaedalusStatus(ns, player, stocksValue) {
 	// Logic below is for rushing a daedalus invite.
 	// We do not need to run if we've previously determined that Daedalus cannot be unlocked (insufficient augs), or if we've already got TRP
 	if (daedalusUnavailable || wdAvailable == true) return reserveForDaedalus = false;
@@ -106,7 +113,7 @@ async function checkOnDaedalusStatus(ns, player) {
 		return reserveForDaedalus = false;
 	}
 	if (reserveForDaedalus) { // Already waiting for a Daedalus invite, try joining them
-		return (4 in dictSourceFiles) ? await getNsDataThroughFile(ns, 'ns.joinFaction(ns.args[0])', '/Temp/joinFaction.txt', ["Daedalus"]) :
+		return (4 in unlockedSFs) ? await getNsDataThroughFile(ns, 'ns.joinFaction(ns.args[0])', '/Temp/joinFaction.txt', ["Daedalus"]) :
 			log(ns, "INFO: Please manually join the faction 'Daedalus' as soon as possible to proceed", false, 'info');
 	}
 	const bitNodeMults = await tryGetBitNodeMultipliers(ns, false) || { DaedalusAugsRequirement: 1 };
@@ -115,7 +122,7 @@ async function checkOnDaedalusStatus(ns, player) {
 	if (playerInstalledAugCount !== null && playerInstalledAugCount < reqDaedalusAugs)
 		return daedalusUnavailable = true; // Won't be able to unlock daedalus this ascend
 	// If we have sufficient augs and hacking, all we need is the money (100b)
-	const totalWorth = getLiquidationValue(ns, player);
+	const totalWorth = player.money + stocksValue;
 	if (totalWorth > 100E9 && player.money < 100E9) {
 		reserveForDaedalus = true;
 		log(ns, "INFO: Temporarily liquidating stocks to earn an invite to Daedalus...", true, 'info');
@@ -135,9 +142,14 @@ async function checkIfBnIsComplete(ns, player) {
 	wdAvailable = true; // WD is available this bitnode. Are we ready to hack it yet?
 	if (player.hacking < wdHack)
 		return false; // We can't hack it yet, but soon!
-	const text = `BN ${player.bitNodeN}.${dictSourceFiles[player.bitNodeN] + 1} completed at ${formatDuration(player.playtimeSinceLastBitnode)}`;
+	const text = `BN ${player.bitNodeN}.${dictOwnedSourceFiles[player.bitNodeN] + 1} completed at ${formatDuration(player.playtimeSinceLastBitnode)}`;
 	await persist_log(ns, text);
 	log(ns, `SUCCESS: ${text}`, true, 'success');
+
+	// Run the --on-completion-script if specified
+	if (options['on-completion-script'])
+		launchScriptHelper(ns, options['on-completion-script'], options['on-completion-script-args'], false);
+
 	// TODO: Use the new singularity function coming soon to automate entering a new BN
 	wdAvailable = false; // TODO: Temporary: For now, set this so this routine doesn't run again
 	return true;
@@ -192,12 +204,12 @@ async function checkOnRunningScripts(ns, player) {
 		]);
 
 	// Launch sleeves and allow them to also ignore the reserve so they can train up to boost gang unlock speed
-	if ((10 in dictSourceFiles) && (2 in dictSourceFiles) && !findScript('sleeve.js'))
+	if ((10 in unlockedSFs) && (2 in unlockedSFs) && !findScript('sleeve.js'))
 		launchScriptHelper(ns, 'sleeve.js', ["--training-reserve", 300000]); // Only avoid training away our casino seed money
 
 	// Spend hacknet hashes on our boosting best hack-income server once established
 	const spendingHashesOnHacking = findScript('spend-hacknet-hashes.js', s => s.args.includes("--spend-on-server"))
-	if ((9 in dictSourceFiles) && !spendingHashesOnHacking && player.playtimeSinceLastAug >= 20 * 60 * 1000) { // 20 minutes seems about right
+	if ((9 in unlockedSFs) && !spendingHashesOnHacking && player.playtimeSinceLastAug >= 20 * 60 * 1000) { // 20 minutes seems about right
 		const strServerIncomeInfo = ns.read('/Temp/analyze-hack.txt');	// HACK: Steal this file that Daemon also relies on
 		if (strServerIncomeInfo) {
 			const incomeByServer = JSON.parse(strServerIncomeInfo);
@@ -246,7 +258,7 @@ async function checkOnRunningScripts(ns, player) {
 
 	// Launch work-for-factions if it isn't already running (rules for killing unproductive instances are above)
 	// Note: We delay launching our own 'work-for-factions.js' until daemon has warmed up, so we don't steal it's "kickstartHackXp" study focus
-	if ((4 in dictSourceFiles) && (2 in dictSourceFiles) && !findScript('work-for-factions.js') && Date.now() - daemonStartTime > 30000) {
+	if ((4 in unlockedSFs) && (2 in unlockedSFs) && !findScript('work-for-factions.js') && Date.now() - daemonStartTime > 30000) {
 		// If we're not yet in a gang, run in such a way that we will spend most of our time doing crime, improving Karma (also is good early income)
 		// NOTE: Default work-for-factions behaviour is to spend hashes on coding contracts, which suits us fine
 		const workArgs = !playerInGang ? rushGangsArgs : ["--fast-crimes-only"];
@@ -290,7 +302,7 @@ async function maybeDoCasino(ns, player) {
  * @param {NS} ns 
  * @param {Player} player */
 async function maybeInstallAugmentations(ns, player) {
-	if (!(4 in dictSourceFiles)) {
+	if (!(4 in unlockedSFs)) {
 		setStatus(ns, `No singularity access, so you're on your own. You should manually work for factions and install augmentations!`);
 		return false; // Cannot automate augmentations or installs without singularity
 	}
@@ -367,9 +379,9 @@ async function maybeInstallAugmentations(ns, player) {
 async function shouldDelayInstall(ns, player) {
 	// Are we close to being able to afford 4S TIX data?
 	if (!player.has4SDataTixApi) {
-		const totalWorth = getLiquidationValue(ns, player);
+		const totalWorth = player.money + await getStocksValue(ns, player);
 		const totalCost = 25E9 * (bitnodeMults?.FourSigmaMarketDataApiCost || 1) +
-			(playerStats.has4SData ? 0 : 1E9 * (bitnodeMults?.FourSigmaMarketDataCost || 1));
+			(player.has4SData ? 0 : 1E9 * (bitnodeMults?.FourSigmaMarketDataCost || 1));
 		// If we're 50% of the way there, hold off, regardless of the '--wait-for-4s' setting
 		if (totalWorth / totalCost > 0.5 || options['wait-for-4s']) {
 			setStatus(ns, `Waiting for scripts to purchase the 4SDataTixApi because ` +
@@ -385,14 +397,19 @@ async function shouldDelayInstall(ns, player) {
 /** Consolidated logic for all the times we want to reserve money
  * @param {NS} ns 
  * @param {Player} player */
-async function manageReservedMoney(ns, player) {
+async function manageReservedMoney(ns, player, stocksValue) {
 	if (reservedPurchase) return; // Do not mess with money reserved for installing augmentations
 	const currentReserve = Number(ns.read("reserve.txt") || 0);
 	if (reserveForDaedalus && currentReserve != 100E9)
 		await ns.write("reserve.txt", 100E9, "w"); // Reserve 100b to get the daedalus invite
-	// Otherwise, reserve 8B for stocks, always
-	if (currentReserve != 8E9)
-		await ns.write("reserve.txt", 8E9, "w"); // Reserve 8 of the 10b casino money for stock seed money
+	// Otherwise, reserve money for stocks, our main source of income for most of the BN.
+	const minStockValue = 8E9; // At a minimum 8 of the 10 billion earned from the casino must be reserved for buying stock
+	const minStockPercent = 0.8; // As we earn more money, reserve 80% of it for further investing in stock
+	const reserveCap = 1E12; // As we start start to earn crazy money, we will hit the stock market cap, so cap the maximum reserve
+	// Dynamically update reserved cash based on how much money is already converted to stocks.
+	const reserve = Math.min(reserveCap, Math.max(0, player.money * minStockPercent, minStockValue - stocksValue));
+	if (currentReserve != reserve)
+		await ns.write("reserve.txt", reserve, "w"); // Reserve 8 of the 10b casino money for stock seed money
 	// NOTE: After several iterations, I decided that the above is actually best to keep in all scenarios:
 	// - Casino.js ignores the reserve, so the above takes care of ensuring our casino seed money isn't spent
 	// - In low-income situations, stockmaster will be our best source of income. We invoke it such that it ignores 
@@ -411,9 +428,9 @@ async function manageReservedMoney(ns, player) {
 
 /** Helper to launch a script and log whether if it succeeded or failed
  * @param {NS} ns */
-function launchScriptHelper(ns, baseScriptName, args = []) {
+function launchScriptHelper(ns, baseScriptName, args = [], convertFileName = true) {
 	ns.tail(); // If we're going to be launching scripts, show our tail window so that we can easily be killed if the user wants to interrupt.
-	const pid = ns.run(getFilePath(baseScriptName), 1, ...args);
+	const pid = ns.run(convertFileName ? getFilePath(baseScriptName) : baseScriptName, 1, ...args);
 	if (!pid)
 		log(ns, `ERROR: Failed to launch ${baseScriptName} with args: [${args.join(", ")}]`, true, 'error');
 	else
@@ -430,14 +447,6 @@ function setStatus(ns, status, uniquePart = null) {
 	if (lastStatusLog == uniquePart) return;
 	lastStatusLog = uniquePart
 	log(ns, status);
-}
-
-/** Helper to get a user's total money including stocks
- * @param {NS} ns 
- * @param {Player} player */
-function getLiquidationValue(ns, player) {
-	// Hack: stats.js conveniently polls for our stock value. I'm just going to steal it from there.
-	return player.money + Number(ns.read('/Temp/stock-portfolio-value.txt') || 0)
 }
 
 /** Append the specified text (with timestamp) to a persistent log in the home directory
