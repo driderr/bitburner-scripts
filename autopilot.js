@@ -34,6 +34,7 @@ let reserveForDaedalus, daedalusUnavailable; // Flags to indicate that we should
 let lastScriptsCheck; // Last time we got a listing of all running scripts
 let killScripts; // A list of scripts flagged to be restarted due to changes in priority
 let dictSourceFiles, bitnodeMults, playerInstalledAugCount; // Info for the current bitnode
+let daemonStartTime; // The time we personally launched daemon.
 
 /** @param {NS} ns **/
 export async function main(ns) {
@@ -44,7 +45,7 @@ export async function main(ns) {
 	// Clear reset global state
 	playerInGang = ranCasino = reserveForDaedalus = daedalusUnavailable = reservedPurchase = false;
 	playerInstalledAugCount = wdAvailable = null;
-	lastScriptsCheck = 0;
+	daemonStartTime = lastScriptsCheck = 0;
 	killScripts = [];
 
 	// Collect and cache some one-time data
@@ -68,16 +69,16 @@ export async function main(ns) {
 	}
 }
 
-/** @param {NS} ns 
- * Logic run periodically throughout the BN **/
+/** Logic run once at the beginning of a new BN
+ * @param {NS} ns */
 async function initializeNewBitnode(ns) {
 	// Clean up all temporary scripts, which will include stale temp files
 	// launchScriptHelper(ns, 'cleanup.js'); // No need, ascedd.js and casino.js do this
 	// await ns.sleep(200); // Wait a short while for the dust to settle.
 }
 
-/** @param {NS} ns 
- * Logic run periodically throughout the BN **/
+/** Logic run periodically throughout the BN
+ * @param {NS} ns */
 async function mainLoop(ns) {
 	const player = await getNsDataThroughFile(ns, 'ns.getPlayer()', '/Temp/getPlayer.txt');
 	await manageReservedMoney(ns, player);
@@ -88,8 +89,9 @@ async function mainLoop(ns) {
 	await maybeInstallAugmentations(ns, player);
 }
 
-/** @param {NS} ns 
- * Logic run periodically to if there is anything we can do to speed along earning a Daedalus invite **/
+/** Logic run periodically to if there is anything we can do to speed along earning a Daedalus invite
+ * @param {NS} ns
+ * @param {Player} player **/
 async function checkOnDaedalusStatus(ns, player) {
 	// Logic below is for rushing a daedalus invite.
 	// We do not need to run if we've previously determined that Daedalus cannot be unlocked (insufficient augs), or if we've already got TRP
@@ -121,8 +123,9 @@ async function checkOnDaedalusStatus(ns, player) {
 	}
 }
 
-/** @param {NS} ns 
- * Logic run periodically throughout the BN to see if we are ready to complete it. **/
+/** Logic run periodically throughout the BN to see if we are ready to complete it.
+ * @param {NS} ns 
+ * @param {Player} player */
 async function checkIfBnIsComplete(ns, player) {
 	if (wdAvailable === false) return false;
 	const wdHack = await getNsDataThroughFile(ns,
@@ -140,32 +143,37 @@ async function checkIfBnIsComplete(ns, player) {
 	return true;
 }
 
-/** @param {NS} ns 
- * Helper to get a list of all scripts running (on home) **/
+/** Helper to get a list of all scripts running (on home)
+ * @param {NS} ns */
 async function getRunningScripts(ns) {
 	return await getNsDataThroughFile(ns, 'ns.ps()', '/Temp/ps.txt');
 }
 
-/** @param {NS} ns 
- * Helper to get the first instance of a running script by name. **/
+/** Helper to get the first instance of a running script by name.
+ * @param {NS} ns 
+ * @param {ProcessInfo[]} runningScripts - (optional) Cached list of running scripts to avoid repeating this expensive request
+ * @param {(value: ProcessInfo, index: number, array: ProcessInfo[]) => unknown} filter - (optional) Filter the list of processes beyond just matching on the script name */
 function findScriptHelper(baseScriptName, runningScripts, filter = null) {
 	return runningScripts.filter(s => s.filename == getFilePath(baseScriptName) && (!filter || filter(s)))[0];
 }
 
-/** @param {NS} ns 
- * Helper to kill a running script instance by name **/
-async function killScript(ns, baseScriptName, runningScripts = null) {
-	const processInfo = findScriptHelper(baseScriptName, runningScripts || (await getRunningScripts(ns)))
+/** Helper to kill a running script instance by name
+ * @param {NS} ns 
+ * @param {ProcessInfo[]} runningScripts - (optional) Cached list of running scripts to avoid repeating this expensive request
+ * @param {ProcessInfo} processInfo - (optional) The process to kill, if we've already found it in advance */
+async function killScript(ns, baseScriptName, runningScripts = null, processInfo = null) {
+	processInfo = processInfo || findScriptHelper(baseScriptName, runningScripts || (await getRunningScripts(ns)))
 	if (processInfo) {
-		log(ns, `INFO: Killing script ${baseScriptName} as requested.`, false, 'info');
+		log(ns, `INFO: Killing script ${baseScriptName} with pid ${processInfo.pid} and args: [${processInfo.args.join(", ")}].`, false, 'info');
 		return await getNsDataThroughFile(ns, 'ns.kill(ns.args[0])', '/Temp/kill.txt', [processInfo.pid]);
 	}
 	log(ns, `WARNING: Skipping request to kill script ${baseScriptName}, no running instance was found...`, false, 'warning');
 	return false;
 }
 
-/** @param {NS} ns 
- * Logic to ensure scripts are running to progress the BN **/
+/** Logic to ensure scripts are running to progress the BN
+ * @param {NS} ns 
+ * @param {Player} player */
 async function checkOnRunningScripts(ns, player) {
 	if (lastScriptsCheck > Date.now() - options['interval-check-scripts']) return;
 	lastScriptsCheck = Date.now();
@@ -186,20 +194,6 @@ async function checkOnRunningScripts(ns, player) {
 	// Launch sleeves and allow them to also ignore the reserve so they can train up to boost gang unlock speed
 	if ((10 in dictSourceFiles) && (2 in dictSourceFiles) && !findScript('sleeve.js'))
 		launchScriptHelper(ns, 'sleeve.js', ["--training-reserve", 300000]); // Only avoid training away our casino seed money
-
-	// Check if we've joined a gang yet. Once we have, restart work-for-factions.js so it can run with different arguments
-	if (!playerInGang) {
-		playerInGang = await getNsDataThroughFile(ns, 'ns.gang.inGang()', '/Temp/gang-inGang.txt');
-		if (playerInGang && findScript('work-for-factions.js'))
-			await killScript(ns, 'work-for-factions.js');
-	}
-	// Launch work-for-factions with different arguments if we're still working towards a gang
-	if ((4 in dictSourceFiles) && (2 in dictSourceFiles) && !findScript('work-for-factions.js')) { // Don't bother re-launching if it's already going
-		const workArgs = ["--fast-crimes-only"]; // NOTE: Default args will spend hashes on coding contracts by default, which we like
-		// If we're not yet in a gang, run in such a way that we will spend most of our time doing crime, improving Karma (also is good early income)
-		if (!playerInGang) workArgs.push("--prioritize-invites", "--crime-focus")
-		launchScriptHelper(ns, 'work-for-factions.js', workArgs);
-	}
 
 	// Spend hacknet hashes on our boosting best hack-income server once established
 	const spendingHashesOnHacking = findScript('spend-hacknet-hashes.js', s => s.args.includes("--spend-on-server"))
@@ -228,6 +222,7 @@ async function checkOnRunningScripts(ns, player) {
 		// Launch daemon in "looping" mode if we have sufficient hack level
 		["--looping-mode", "--recovery-thread-padding", 10, "--cycle-timing-delay", 2000, "--queue-delay", "10",
 			"--stock-manipulation-focus", "--silent-misfires", "--initial-max-targets", "63", "--no-share"];
+	daemonArgs.push('--disable-script', getFilePath('work-for-factions.js')); // We will run this ourselves with args of our choosing
 	// By default, disable joining bladeburner, since it slows BN12 progression by requiring combat augs not used elsewhere
 	if (!options['enable-bladeburner']) daemonArgs.push('--disable-script', getFilePath('bladeburner.js'));
 	// Launch or re-launch daemon with the desired arguments
@@ -235,11 +230,33 @@ async function checkOnRunningScripts(ns, player) {
 		if (player.hacking >= hackThreshold)
 			log(ns, `INFO: Hack level (${player.hacking}) is >= ${hackThreshold} (--high-hack-threshold): Starting daemon.js in high-performance hacking mode.`);
 		launchScriptHelper(ns, 'daemon.js', daemonArgs);
+		daemonStartTime = Date.now();
+	}
+
+	// Check if we've joined a gang yet. (Never have to check again once we know we're in one)
+	if (!playerInGang) playerInGang = await getNsDataThroughFile(ns, 'ns.gang.inGang()', '/Temp/gang-inGang.txt');
+	// The following args are ideal when running 'work-for-factions.js' to rush unlocking gangs (earn karma)
+	const rushGangsArgs = ["--fast-crimes-only", "--prioritize-invites", "--crime-focus"];
+	// Detect if a 'work-for-factions.js' instance is running with args that don't match our goal. We aren't too picky,
+	// (so the player can run with custom args), but should have --crime-focus if (and only if) we're still working towards a gang.
+	const wrongWork = findScript('work-for-factions.js', playerInGang ? s => s.args.includes("--crime-focus") :
+		s => !rushGangsArgs.all(a => s.args.includes(a))); // Require all rushGangsArgs if we're not in a gang yet.
+	// If running with the wrong args, kill it so we can start it with the desired args
+	if (wrongWork) await killScript(ns, 'work-for-factions.js', null, wrongWork);
+
+	// Launch work-for-factions if it isn't already running (rules for killing unproductive instances are above)
+	// Note: We delay launching our own 'work-for-factions.js' until daemon has warmed up, so we don't steal it's "kickstartHackXp" study focus
+	if ((4 in dictSourceFiles) && (2 in dictSourceFiles) && !findScript('work-for-factions.js') && Date.now() - daemonStartTime > 30000) {
+		// If we're not yet in a gang, run in such a way that we will spend most of our time doing crime, improving Karma (also is good early income)
+		// NOTE: Default work-for-factions behaviour is to spend hashes on coding contracts, which suits us fine
+		const workArgs = !playerInGang ? rushGangsArgs : ["--fast-crimes-only"];
+		launchScriptHelper(ns, 'work-for-factions.js', workArgs);
 	}
 }
 
-/** @param {NS} ns 
- * Logic to steal 10b from the casino **/
+/** Logic to steal 10b from the casino
+ * @param {NS} ns 
+ * @param {Player} player */
 async function maybeDoCasino(ns, player) {
 	const casinoFlagFile = "/Temp/ran-casino.txt";
 	if (ranCasino) return;
@@ -269,8 +286,9 @@ async function maybeDoCasino(ns, player) {
 	}
 }
 
-/** @param {NS} ns 
- * Logic to detect if it's a good time to install augmentations, and if so, do so **/
+/** Logic to detect if it's a good time to install augmentations, and if so, do so
+ * @param {NS} ns 
+ * @param {Player} player */
 async function maybeInstallAugmentations(ns, player) {
 	if (!(4 in dictSourceFiles)) {
 		setStatus(ns, `No singularity access, so you're on your own. You should manually work for factions and install augmentations!`);
@@ -343,8 +361,9 @@ async function maybeInstallAugmentations(ns, player) {
 	await persist_log(ns, errLog);
 }
 
-/** @param {NS} ns 
- * Logic to detect if we are close to a milestone and should postpone installing augmentations until it is hit **/
+/** Logic to detect if we are close to a milestone and should postpone installing augmentations until it is hit
+ * @param {NS} ns 
+ * @param {Player} player */
 async function shouldDelayInstall(ns, player) {
 	// Are we close to being able to afford 4S TIX data?
 	if (!player.has4SDataTixApi) {
@@ -363,8 +382,9 @@ async function shouldDelayInstall(ns, player) {
 	return false;
 }
 
-/** @param {NS} ns 
- * Consolidated logic for all the times we want to reserve money **/
+/** Consolidated logic for all the times we want to reserve money
+ * @param {NS} ns 
+ * @param {Player} player */
 async function manageReservedMoney(ns, player) {
 	if (reservedPurchase) return; // Do not mess with money reserved for installing augmentations
 	const currentReserve = Number(ns.read("reserve.txt") || 0);
@@ -389,8 +409,8 @@ async function manageReservedMoney(ns, player) {
 	*/
 }
 
-/** @param {NS} ns 
- * Helper to launch a script and log whether if it succeeded or failed **/
+/** Helper to launch a script and log whether if it succeeded or failed
+ * @param {NS} ns */
 function launchScriptHelper(ns, baseScriptName, args = []) {
 	ns.tail(); // If we're going to be launching scripts, show our tail window so that we can easily be killed if the user wants to interrupt.
 	const pid = ns.run(getFilePath(baseScriptName), 1, ...args);
@@ -403,8 +423,8 @@ function launchScriptHelper(ns, baseScriptName, args = []) {
 
 let lastStatusLog = ""; // The current or last-assigned long-term status (what this script is waiting to happen)
 
-/** @param {NS} ns 
- * Helper to set a global status and print it if it changes. **/
+/** Helper to set a global status and print it if it changes
+ * @param {NS} ns */
 function setStatus(ns, status, uniquePart = null) {
 	uniquePart = uniquePart || status; // Can be used to consider a logs "the same" (not worth re-printing) even if they have some different text
 	if (lastStatusLog == uniquePart) return;
@@ -412,15 +432,16 @@ function setStatus(ns, status, uniquePart = null) {
 	log(ns, status);
 }
 
-/** @param {NS} ns 
- * Helper to get a user's total money including stocks **/
+/** Helper to get a user's total money including stocks
+ * @param {NS} ns 
+ * @param {Player} player */
 function getLiquidationValue(ns, player) {
 	// Hack: stats.js conveniently polls for our stock value. I'm just going to steal it from there.
 	return player.money + Number(ns.read('/Temp/stock-portfolio-value.txt') || 0)
 }
 
-/** @param {NS} ns 
- * Append the specified text (with timestamp) to a persistent log in the home directory **/
+/** Append the specified text (with timestamp) to a persistent log in the home directory
+ * @param {NS} ns */
 async function persist_log(ns, text) {
 	await ns.write(persistentLog, `${(new Date()).toISOString().substring(0, 19)} ${text}\n`, "a")
 }
