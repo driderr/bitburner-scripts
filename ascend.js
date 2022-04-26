@@ -46,6 +46,7 @@ export async function main(ns) {
 
     // Clear any global reserve so that all money can be spent
     await ns.write(getFilePath('reserve.txt'), '0', "w");
+    ns.run("bribeAll.js");
 
     // STEP 1: Liquidate Stocks and (SF9) Hacknet Hashes
     log(ns, 'Sell stocks and hashes...', true, 'info');

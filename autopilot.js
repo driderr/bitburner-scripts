@@ -20,7 +20,7 @@ const argsSchema = [ // The set of all command line arguments
 	['high-hack-threshold', 8000], // Once hack level reaches this, we start daemon in high-performance hacking mode
 	['enable-bladeburner', false], // Set to true to allow bladeburner progression (probably slows down BN completion)
 	['wait-for-4s', true], // If true, will not reset until the 4S Tix API has been acquired (major source of income early on, especially in harder nodes)
-	['on-completion-script', null], // Spawn this script when we defeat the bitnode
+	['on-completion-script', "/abs/kill-all-scripts.js"], // Spawn this script when we defeat the bitnode
 	['on-completion-script-args', []], // Optional args to pass to the script when we defeat the bitnode
 ];
 export function autocomplete(data, args) {
@@ -40,6 +40,10 @@ let lastScriptsCheck; // Last time we got a listing of all running scripts
 let killScripts; // A list of scripts flagged to be restarted due to changes in priority
 let dictOwnedSourceFiles, unlockedSFs, bitnodeMults, playerInstalledAugCount; // Info for the current bitnode
 let daemonStartTime; // The time we personally launched daemon.
+
+function find(xpath) { return document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; }
+async function click(elem) { await elem[Object.keys(elem)[1]].onClick({ isTrusted: true }); }
+
 
 /** @param {NS} ns **/
 export async function main(ns) {
@@ -64,6 +68,48 @@ export async function main(ns) {
 	if (player.playtimeSinceLastBitnode < 60 * 1000) // Skip initialization if we've been in the bitnode for more than 1 minute
 		await initializeNewBitnode(ns);
 
+	//drider section
+	//on force reload, WFF messes everything up - kill it, and stockmaster keeps taking away our cash
+	let corp = eval('ns.corporation');
+	ns.ps("home").filter(p => p.filename == "/abs/work-for-factions.js").map(p => ns.kill(p.pid));
+	ns.ps("home").filter(p => p.filename == "/abs/stockmaster.js").map(p => ns.kill(p.pid));
+
+	if (ns.getPlayer().hasCorporation && corp.getCorporation().public) { //allow time for dividends to put in first deposit of reset
+		ns.tprint("Waiting for dividends...");
+		await ns.asleep(10000);
+	}
+	if (ns.getPlayer().money < 200e3) {
+		while (ns.getPlayer().money < 200e3) {
+			await ns.asleep(ns.commitCrime("mug"));
+		}
+	}
+	if (!ns.getPlayer().hasCorporation) {
+		ns.run("oreoLatest.js");
+		await ns.write("rebootPlease.txt", "do it", "w");
+		await ns.asleep(1000);
+		let pid = ns.run("ailooper2.js");
+		while (ns.getPlayer().money < 250e9) {
+			await ns.asleep(2000);
+		}
+		ns.kill(pid);
+		ns.run("oreoLatest.js",1,"--kill");
+		while (ns.getServerMaxRam("home") < 4000 && ns.upgradeHomeRam()) {
+			await ns.asleep(1);
+		}
+	}
+	if (ns.getPlayer().money < 50e9) {
+		ns.run("oreoLatest.js");
+		await ns.write("rebootPlease.txt", "do it", "w");
+		await ns.asleep(1000);
+		let pid = ns.run("ailooper2.js");
+		while (ns.getPlayer().money < 50e9) {
+			await ns.asleep(2000);
+		}
+		ns.kill(pid);
+		ns.run("oreoLatest.js",1,"--kill");
+	}
+	await ns.sleep(2000);
+	ns.run("corp.js");
 	// Main loop: Monitor progress in the current BN and automatically reset when we can afford TRP, or N augs.
 	while (true) {
 		try { await mainLoop(ns); }
@@ -363,6 +409,16 @@ async function maybeInstallAugmentations(ns, player) {
 		setStatus(ns, `Reserving ${augSummary}`);
 		await ns.write("reserve.txt", facman.total_rep_cost + facman.total_aug_cost, "w"); // Should prevent other scripts from spending this money
 		return reservedPurchase = true; // Set a flag so that on our next loop, we actually try to execute the purchase
+	}
+	// reload to avoid memory leak/slowdown
+	if (ns.fileExists("rebootPlease.txt", "home")){
+		ns.rm("rebootPlease.txt", "home");
+		const btnSaveGame = find("//button[@aria-label = 'save game']");
+		await click(btnSaveGame);
+		await ns.sleep(1000); // Assume the game didn't save instantly and give it some time
+		eval("window").onbeforeunload = null; // Disable the unsaved changes warning before reloading
+		location.reload(); // Force refresh the page without saving           
+		await ns.sleep(10000); // Keep the script alive to be safe. Presumably the page reloads before this completes.
 	}
 
 	// Otherwise, we've got the money reserved, we can afford the augs, we should be confident to ascend
