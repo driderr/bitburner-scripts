@@ -88,7 +88,7 @@ export async function main(ns) {
 			await ns.asleep(ns.commitCrime("mug"));
 		}
 	}
-	if (!ns.getPlayer().hasCorporation) {
+	if (!ns.getPlayer().hasCorporation && ns.getPlayer().money < 250e9) {
 		ns.run("oreoLatest.js");
 		await ns.write("rebootPlease.txt", "do it", "w");
 		await ns.asleep(1000);
