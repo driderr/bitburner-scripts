@@ -445,15 +445,16 @@ async function maybeInstallAugmentations(ns, player) {
 		installCountdown = Date.now() + options['install-countdown']; // Each time we can afford more augs, reset the install delay timer
 		await ns.write("reserve.txt", reserveNeeded, "w"); // Should prevent other scripts from spending this money
 	}
+	if (!(ns.getPlayer().hasCorporation && corp.getCorporation().public)) { //bypass timer if corp public, timer just keeps resetting over and over
 	// We must wait until the configured cooldown elapses before we install augs.
-	if (installCountdown > Date.now()) {
-		resetStatus += `\nWaiting for ${formatDuration(options['install-countdown'])} (--install-countdown) to elapse ` +
-			`with no new affordable augs before we install...`;
-		setStatus(ns, resetStatus);
-		ns.toast(`Heads up: Autopilot plans to reset in ${formatDuration(installCountdown - Date.now())}`, 'info');
-		return reservedPurchase = reserveNeeded;
+		if (installCountdown > Date.now()) {
+			resetStatus += `\nWaiting for ${formatDuration(options['install-countdown'])} (--install-countdown) to elapse ` +
+				`with no new affordable augs before we install...`;
+			setStatus(ns, resetStatus);
+			ns.toast(`Heads up: Autopilot plans to reset in ${formatDuration(installCountdown - Date.now())}`, 'info');
+			return reservedPurchase = reserveNeeded;
+		}
 	}
-
 
 	// Otherwise, we've got the money reserved, we can afford the augs, we should be confident to ascend
 	const resetLog = `Invoking ascend.js at ${formatDuration(player.playtimeSinceLastAug).padEnd(11)} since last aug to install: ${augSummary}`;
