@@ -2,7 +2,7 @@ import {
 	log, getFilePath, getConfiguration, instanceCount, getNsDataThroughFile, runCommand, waitForProcessToComplete,
 	getActiveSourceFiles, tryGetBitNodeMultipliers, getStocksValue,
 	formatMoney, formatDuration
-} from './helpers.js'
+} from '/abs/helpers.js'
 
 const persistentLog = "log.autopilot.txt";
 const factionManagerOutputFile = "/Temp/affordable-augs.txt"; // Temp file produced by faction manager with status information
@@ -480,6 +480,7 @@ async function maybeInstallAugmentations(ns, player) {
 		installCountdown = Date.now() + options['install-countdown']; // Each time we can afford more augs, reset the install delay timer
 		await ns.write("reserve.txt", reserveNeeded, "w"); // Should prevent other scripts from spending this money
 	}
+	let corp = eval('ns.corporation');
 	if (!(ns.getPlayer().hasCorporation && corp.getCorporation().public)) { //bypass timer if corp public, timer just keeps resetting over and over
 	// We must wait until the configured cooldown elapses before we install augs.
 		if (installCountdown > Date.now()) {
