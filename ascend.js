@@ -1,4 +1,4 @@
-import { getFilePath, runCommand, waitForProcessToComplete, getNsDataThroughFile, getActiveSourceFiles, log } from './helpers.js'
+import { log, getConfiguration, getFilePath, runCommand, waitForProcessToComplete, getNsDataThroughFile, getActiveSourceFiles } from './helpers.js'
 
 const argsSchema = [
     ['prioritize-augmentations', false], // If set to true, will spend as much money as possible on augmentations before upgrading home RAM
@@ -21,7 +21,8 @@ export function autocomplete(data, args) {
 /** @param {NS} ns 
  * This script is meant to do all the things best done when ascending (in a generally ideal order) **/
 export async function main(ns) {
-    const options = ns.flags(argsSchema);
+    const options = getConfiguration(ns, argsSchema);
+    if (!options) return; // Invalid options, or ran in --help mode.
     let dictSourceFiles = await getActiveSourceFiles(ns); // Find out what source files the user has unlocked
     if (!(4 in dictSourceFiles))
         return log(ns, "ERROR: You cannot automate installing augmentations until you have unlocked singularity access (SF4).", true, 'error');
@@ -31,8 +32,8 @@ export async function main(ns) {
     const playerData = await getNsDataThroughFile(ns, 'ns.getPlayer()', '/Temp/player-info.txt');
 
     // Kill every script except this one, since it can interfere with out spending
-    let pid = await runCommand(ns, `ns.ps().filter(s => s.filename != "${ns.getScriptName()}").forEach(s => ns.kill(s.pid));`,
-        '/Temp/kill-everything-but-ascend.js');
+    let pid = await runCommand(ns, `ns.ps().filter(s => s.filename != ns.args[0]).forEach(s => ns.kill(s.pid));`,
+        '/Temp/kill-everything-but.js', [ns.getScriptName()]);
     await waitForProcessToComplete(ns, pid, true); // Wait for the script to shut down, indicating it has shut down other scripts
 	ns.stopAction(); //collect pending reputation
 
@@ -84,7 +85,7 @@ export async function main(ns) {
     // Sanity check, if we are not slated to install any augmentations, ABORT
     // Get owned + purchased augmentations, then installed augmentations. Ensure there's a difference
     let purchasedAugmentations = await getNsDataThroughFile(ns, 'ns.getOwnedAugmentations(true)', '/Temp/player-augs-purchased.txt');
-    let installedAugmentations = await getNsDataThroughFile(ns, 'ns.getOwnedAugmentations(false)', '/Temp/player-augs-installed.txt');
+    let installedAugmentations = await getNsDataThroughFile(ns, 'ns.getOwnedAugmentations()', '/Temp/player-augs-installed.txt');
     let noAugsToInstall = purchasedAugmentations.length == installedAugmentations.length;
     if (noAugsToInstall && !options['allow-soft-reset'])
         return log(ns, `ERROR: See above faction-manager.js logs - there are no new purchased augs. ` +
@@ -151,9 +152,9 @@ export async function main(ns) {
             // Default script (if none is specified) is stanek.js if we have it (which in turn will spawn daemon.js when done)
             (purchasedAugmentations.includes(`Stanek's Gift - Genesis`) ? getFilePath('stanek.js') : getFilePath('daemon.js'));
         if (noAugsToInstall)
-            await runCommand(ns, `ns.softReset('${resetScript}')`, '/Temp/soft-reset.js');
+            await runCommand(ns, `ns.softReset(ns.args[0])`, '/Temp/soft-reset.js', [resetScript]);
         else
-            await runCommand(ns, `ns.installAugmentations('${resetScript}')`, '/Temp/install-augmentations.js');
+            await runCommand(ns, `ns.installAugmentations(ns.args[0])`, '/Temp/install-augmentations.js', [resetScript]);
     } else
         log(ns, `SUCCESS: Ready to ascend. In the future, you can run with --reset (or --install-augmentations) ` +
             `to actually perform the reset automatically.`, true, 'success');
