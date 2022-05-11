@@ -8,6 +8,8 @@ const argsSchema = [
     ['bypass-stanek-warning', false], // If set to true, and this will bypass the warning before purchasing augmentations if you haven't gotten stanek yet.
     // Spawn this script after installing augmentations (Note: Args not supported by the game)
     ['on-reset-script', null], // By default, will start with `stanek.js` if you have stanek's gift, otherwise `daemon.js`.
+    ['ticks-to-wait-for-additional-purchases', 10], // Don't reset until we've gone this many game ticks without any new purchases being made (10 * 200ms (game tick time) ~= 2 seconds)
+    ['max-wait-time', 60000], // The maximum number of milliseconds we'll wait for external scripts to purchase whatever permanent upgrades they can before we ascend anyway.
 ];
 
 export function autocomplete(data, args) {
@@ -26,6 +28,7 @@ export async function main(ns) {
     let dictSourceFiles = await getActiveSourceFiles(ns); // Find out what source files the user has unlocked
     if (!(4 in dictSourceFiles))
         return log(ns, "ERROR: You cannot automate installing augmentations until you have unlocked singularity access (SF4).", true, 'error');
+    ns.disableLog('sleep');
 
     // TODO: Additional sanity checks: Make sure it's a good time to reset
     // - We should be able to install ~10 augs or so after maxing home ram purchases?
@@ -108,7 +111,7 @@ export async function main(ns) {
     // STEP 5: (SF10) Buy whatever sleeve upgrades we can afford
     if (10 in dictSourceFiles) {
         log(ns, 'Try Upgrade Sleeves...', true, 'info');
-        ns.run(getFilePath('sleeve.js'), 1, '--reserve', '0', '--aug-budget', '1', '--min-aug-batch', '1', '--buy-cooldown', '0');
+        ns.run(getFilePath('sleeve.js'), 1, '--reserve', '0', '--aug-budget', '1', '--min-aug-batch', '1', '--buy-cooldown', '0', '--disable-training');
         await ns.sleep(500); // Give it time to make its initial purchases. Note that we do not block on the process shutting down - it will keep running.
     }
 
@@ -136,13 +139,12 @@ export async function main(ns) {
 
     // WAIT: For money to stop decreasing, so we know that external scripts have bought what they could.
     log(ns, 'Waiting for purchasing to stop...', true, 'info');
-    let money = 0, lastMoney = 0, ticksWithoutPurchases = 0, timeout = 50;
-    while (ticksWithoutPurchases < 10 && timeout > 0) { // 10 * 200ms (game tick time) ~= 2 seconds
+    let money = 0, lastMoney = 0, ticksWithoutPurchases = 0;
+    const maxWait = Date.now() + options['max-wait-time'];
+    while (ticksWithoutPurchases < options['ticks-to-wait-for-additional-purchases'] && (Date.now() < maxWait)) {
         const start = Date.now(); // Used to wait for the game to tick.
-        while ((Date.now() - start <= 200) && lastMoney == (money = await getNsDataThroughFile(ns, `ns.getServerMoneyAvailable('home')`, '/Temp/player-money.txt')))
             await ns.sleep(10); // Wait for game to tick (money to change) - might happen sooner than 200ms
         ticksWithoutPurchases = money < lastMoney ? 0 : ticksWithoutPurchases + 1;
-		timeout = timeout - 1;
         lastMoney = money;
     }
 

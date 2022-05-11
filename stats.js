@@ -122,15 +122,16 @@ export async function main(ns) {
                 }
             }
 
-            // Show various RAM utilization stats
+            // Show various server / RAM utilization stats
             if (!options['hide-RAM-utilization']) {
                 const servers = await getAllServersInfo(ns);
-                const [count, rooted, purchased] = [servers.length, servers.filter(s => s.hasAdminRights).length, servers.filter(s => s.purchasedByPlayer).length];
+                const rooted = servers.filter(s => s.hasAdminRights).length;
+                const purchased = servers.filter(s => s.hostname != "home" && s.purchasedByPlayer).length; // "home" counts as purchased by the game
                 const likelyHacknet = servers.filter(s => s.hostname.startsWith("hacknet-node-"));
-                // Add Server count
-                addHud("Servers", `${count}/${rooted}/${purchased}`, `The number of servers on the network (${count}) / ` +
-                    `number rooted (${rooted}) / number purchased ` + (9 in dictSourceFiles || 9 == bitNode ?
-                        `(${purchased - likelyHacknet.length} host + ${likelyHacknet.length} hacknet servers)` : `(${purchased})`));
+                // Add Server count.
+                addHud("Servers", `${servers.length}/${rooted}/${purchased}`, `The number of servers on the network (${servers.length}) / ` +
+                    `number rooted (${rooted}) / number purchased ` + (likelyHacknet.length > 0 ?
+                        `(${purchased - likelyHacknet.length} servers + ${likelyHacknet.length} hacknet servers)` : `(${purchased})`));
                 const home = servers.find(s => s.hostname == "home");
                 // Add Home RAM and Utilization
                 addHud("Home RAM", `${ns.nFormat(home.maxRam * 1E9, '0b')} ${(100 * home.ramUsed / home.maxRam).toFixed(1)}%`,
@@ -195,10 +196,11 @@ function addCSS(doc) {
     if (priorCss) priorCss.parentNode.removeChild(priorCss); // Remove old CSS to facilitate tweaking css above
     // Hopefully this logic remains valid for detecting which element is the HUD draggable window
     const hudParent = doc.getElementsByClassName(`MuiCollapse-root`)[0].parentElement;
-    if (hudParent) hudParent.style.zIndex = Number.MAX_SAFE_INTEGER;
+    if (hudParent) hudParent.style.zIndex = 1E4; // Tail windows start around 1500, this should keep the HUD above them
     doc.head.insertAdjacentHTML('beforeend', css(hudParent ? eval('window').getComputedStyle(hudParent) : null));
 }
 const css = (rootStyle) => `<style id="statsCSS">
+    .MuiTooltip-popper { z-index: 10001 } /* Sadly, not parented by its owners, so must be updated with MuiCollapse-root's parent */
     .tooltip  { margin: 0; position: relative; }
     .tooltip:hover .tooltiptext { visibility: visible; opacity: 0.85; }
     .tooltip .tooltiptext {
