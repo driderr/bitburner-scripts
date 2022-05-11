@@ -35,14 +35,18 @@ export async function main(ns) {
     let pid = await runCommand(ns, `ns.ps().filter(s => s.filename != ns.args[0]).forEach(s => ns.kill(s.pid));`,
         '/Temp/kill-everything-but.js', [ns.getScriptName()]);
     await waitForProcessToComplete(ns, pid, true); // Wait for the script to shut down, indicating it has shut down other scripts
-	ns.stopAction(); //collect pending reputation
+    ns.stopAction(); //collect pending reputation
 
     // Stop the current action so that we're no longer spending money (if training) and can collect rep earned (if working)
     await getNsDataThroughFile(ns, 'ns.stopAction()', '/Temp/stop-player-action.txt');
 
     // Clear any global reserve so that all money can be spent
     await ns.write(getFilePath('reserve.txt'), '0', "w");
-    ns.run("bribeAll.js");
+    let corp = eval('ns.corporation');
+    if (ns.getPlayer().hasCorporation && corp.getCorporation().public) 
+    {
+        ns.run("bribeAll.js");
+    }
 
     // STEP 1: Liquidate Stocks and (SF9) Hacknet Hashes
     log(ns, 'Sell stocks and hashes...', true, 'info');
@@ -132,14 +136,13 @@ export async function main(ns) {
 
     // WAIT: For money to stop decreasing, so we know that external scripts have bought what they could.
     log(ns, 'Waiting for purchasing to stop...', true, 'info');
-    let money = 0, lastMoney = 0, ticksWithoutPurchases = 0;
-    while (ticksWithoutPurchases < 10) { // 10 * 200ms (game tick time) ~= 2 seconds
+    let money = 0, lastMoney = 0, ticksWithoutPurchases = 0, timeout = 50;
+    while (ticksWithoutPurchases < 10 && timeout > 0) { // 10 * 200ms (game tick time) ~= 2 seconds
         const start = Date.now(); // Used to wait for the game to tick.
-        const refreshMoney = async () => money =
-            await getNsDataThroughFile(ns, `ns.getServerMoneyAvailable(ns.args[0])`, `/Temp/getServerMoneyAvailable.txt`, ["home"]);
-        while ((Date.now() - start <= 200) && lastMoney == await refreshMoney())
+        while ((Date.now() - start <= 200) && lastMoney == (money = await getNsDataThroughFile(ns, `ns.getServerMoneyAvailable('home')`, '/Temp/player-money.txt')))
             await ns.sleep(10); // Wait for game to tick (money to change) - might happen sooner than 200ms
         ticksWithoutPurchases = money < lastMoney ? 0 : ticksWithoutPurchases + 1;
+		timeout = timeout - 1;
         lastMoney = money;
     }
 

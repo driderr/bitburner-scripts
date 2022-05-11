@@ -60,7 +60,8 @@ export async function main(ns) {
 
 	log(ns, "INFO: Auto-pilot engaged...", true, 'info');
 	let startUpRan = false;
-	//drider section
+
+	//******drider section
 	//on force reload, WFF messes everything up - kill it, and stockmaster keeps taking away our cash
 	let corp = eval('ns.corporation');
 	ns.ps("home").filter(p => p.filename == "/abs/work-for-factions.js").map(p => ns.kill(p.pid));
@@ -84,7 +85,7 @@ export async function main(ns) {
 			await ns.asleep(2000);
 		}
 		ns.kill(pid);
-		ns.run("oreoLatest.js",1,"--kill");
+		ns.run("oreoLatest.js", 1, "--kill");
 		while (ns.getServerMaxRam("home") < 4000 && ns.upgradeHomeRam()) {
 			await ns.asleep(1);
 		}
@@ -98,11 +99,32 @@ export async function main(ns) {
 			await ns.asleep(2000);
 		}
 		ns.kill(pid);
-		ns.run("oreoLatest.js",1,"--kill");
+		ns.run("oreoLatest.js", 1, "--kill");
 	}
 	await ns.sleep(2000);
+	if (ns.purchaseAugmentation("Church of the Machine God", "Stanek's Gift - Genesis")) {
+		log(ns, "INFO: Purchased Stanek's Gift", true, 'info');
+		await ns.sleep(1000);
+		// Kick off ascend.js
+		let errLog;
+		const ascendArgs = ['--install-augmentations', true,
+			'--on-reset-script', ns.getScriptName(), // TODO: Preserve the current script's state / args through the reset		
+			'--bypass-stanek-warning', true] // TODO: Automate accepting stanek's gift now that we can
+		let pid = launchScriptHelper(ns, 'ascend.js', ascendArgs);
+		ns.tail()
+		if (pid) {
+			log(ns, "INFO: Waiting for ascension", true, 'info');
+			await waitForProcessToComplete(ns, pid, true); // Wait for the script to shut down (Ascend should get killed as it does, since the BN will be rebooting)
+			await ns.asleep(1000); // If we've been scheduled to be killed, awaiting an NS function should trigger it?
+			errLog = `ERROR: ascend.js ran, but we're still here. Something must have gone wrong. Will try again later`;
+			log(ns, errLog, true, 'error');
+		} else {
+			errLog = `ERROR: Failed to launch ascend.js (pid == 0). Will try again later`;
+			log(ns, errLog, true, 'error');
+		}
+	}
 	// reload to avoid memory leak/slowdown
-	if (ns.fileExists("rebootPlease.txt", "home")){
+	if (ns.fileExists("rebootPlease.txt", "home")) {
 		ns.rm("rebootPlease.txt", "home");
 		const btnSaveGame = find("//button[@aria-label = 'save game']");
 		await click(btnSaveGame);
@@ -111,15 +133,17 @@ export async function main(ns) {
 		location.reload(); // Force refresh the page without saving           
 		await ns.sleep(10000); // Keep the script alive to be safe. Presumably the page reloads before this completes.
 	}
+	ns.run("loadBoard.js");
 	ns.run("corp.js");
-	
+	//******END drider section
+
 	while (true) {
 		try {
 			// Start-up actions, wrapped in error handling in case of temporary failures
 			if (!startUpRan) startUpRan = await startUp(ns);
 			// Main loop: Monitor progress in the current BN and automatically reset when we can afford TRP, or N augs.
 			await mainLoop(ns);
-	}
+		}
 		catch (err) {
 			log(ns, `WARNING: autopilot.js Caught (and suppressed) an unexpected error:\n` +
 				(typeof err === 'string' ? err : err.message || JSON.stringify(err)), false, 'warning');
@@ -144,11 +168,11 @@ async function startUp(ns) {
 	dictOwnedSourceFiles = await getActiveSourceFiles(ns, false);
 	unlockedSFs = await getActiveSourceFiles(ns, true);
 	try {
-	installedAugmentations = !(4 in unlockedSFs) ? [] :
-		await getNsDataThroughFile(ns, 'ns.getOwnedAugmentations()', '/Temp/player-augs-installed.txt');
-	if (!(4 in unlockedSFs))
-		log(ns, `WARNING: This script requires SF4 (singularity) functions to assess purchasable augmentations ascend automatically. ` +
-			`Some functionality will be diabled and you'll have to manage working for factions, purchasing, and installing augmentations yourself.`, true);
+		installedAugmentations = !(4 in unlockedSFs) ? [] :
+			await getNsDataThroughFile(ns, 'ns.getOwnedAugmentations()', '/Temp/player-augs-installed.txt');
+		if (!(4 in unlockedSFs))
+			log(ns, `WARNING: This script requires SF4 (singularity) functions to assess purchasable augmentations ascend automatically. ` +
+				`Some functionality will be diabled and you'll have to manage working for factions, purchasing, and installing augmentations yourself.`, true);
 	} catch (err) {
 		if (unlockedSFs[4] || 0 == 3) throw err; // No idea why this failed, treat as temporary and allow auto-retry.		
 		log(ns, `WARNING: You only have SF4 level ${unlockedSFs[4]}. Without level 3, some singularity functions will be ` +
@@ -500,14 +524,14 @@ async function maybeInstallAugmentations(ns, player) {
 	// Ensure the money needed for the above augs doesn't get ripped out from under us by reserving it and waiting one more loop
 	if (reservedPurchase < reserveNeeded) {
 		if (reservedPurchase != 0) // If we were already reserving for a purchase and the nubmer went up, log a notice of the timer being reset.
-		log(ns, `INFO: The augmentation purchase we can afford has increased from ${formatMoney(reservedPurchase)} ` +
-			`to ${formatMoney(reserveNeeded)}. Resetting the timer before we install augmentations.`);
+			log(ns, `INFO: The augmentation purchase we can afford has increased from ${formatMoney(reservedPurchase)} ` +
+				`to ${formatMoney(reserveNeeded)}. Resetting the timer before we install augmentations.`);
 		installCountdown = Date.now() + options['install-countdown']; // Each time we can afford more augs, reset the install delay timer
 		await ns.write("reserve.txt", reserveNeeded, "w"); // Should prevent other scripts from spending this money
 	}
 	let corp = eval('ns.corporation');
 	if (!(ns.getPlayer().hasCorporation && corp.getCorporation().public)) { //bypass timer if corp public, timer just keeps resetting over and over
-	// We must wait until the configured cooldown elapses before we install augs.
+		// We must wait until the configured cooldown elapses before we install augs.
 		if (installCountdown > Date.now()) {
 			resetStatus += `\nWaiting for ${formatDuration(options['install-countdown'])} (--install-countdown) to elapse ` +
 				`with no new affordable augs before we install...`;
