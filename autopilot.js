@@ -66,7 +66,28 @@ export async function main(ns) {
 	let corp = eval('ns.corporation');
 	ns.ps("home").filter(p => p.filename == "/abs/work-for-factions.js").map(p => ns.kill(p.pid));
 	ns.ps("home").filter(p => p.filename == "/abs/stockmaster.js").map(p => ns.kill(p.pid));
-
+	
+	if (ns.purchaseAugmentation("Church of the Machine God", "Stanek's Gift - Genesis")) {
+		log(ns, "INFO: Purchased Stanek's Gift", true, 'info');
+		await ns.sleep(1000);
+		// Kick off ascend.js
+		let errLog;
+		const ascendArgs = ['--install-augmentations', true,
+			'--on-reset-script', ns.getScriptName(), // TODO: Preserve the current script's state / args through the reset		
+			'--bypass-stanek-warning', true] // TODO: Automate accepting stanek's gift now that we can
+		let pid = launchScriptHelper(ns, 'ascend.js', ascendArgs);
+		ns.tail()
+		if (pid) {
+			log(ns, "INFO: Waiting for ascension", true, 'info');
+			await waitForProcessToComplete(ns, pid, true); // Wait for the script to shut down (Ascend should get killed as it does, since the BN will be rebooting)
+			await ns.asleep(1000); // If we've been scheduled to be killed, awaiting an NS function should trigger it?
+			errLog = `ERROR: ascend.js ran, but we're still here. Something must have gone wrong. Will try again later`;
+			log(ns, errLog, true, 'error');
+		} else {
+			errLog = `ERROR: Failed to launch ascend.js (pid == 0). Will try again later`;
+			log(ns, errLog, true, 'error');
+		}
+	}
 	if (ns.getPlayer().hasCorporation && corp.getCorporation().public) { //allow time for dividends to put in first deposit of reset
 		ns.tprint("Waiting for dividends...");
 		await ns.asleep(10000);
@@ -102,27 +123,7 @@ export async function main(ns) {
 		ns.run("oreoLatest.js", 1, "--kill");
 	}
 	await ns.sleep(2000);
-	if (ns.purchaseAugmentation("Church of the Machine God", "Stanek's Gift - Genesis")) {
-		log(ns, "INFO: Purchased Stanek's Gift", true, 'info');
-		await ns.sleep(1000);
-		// Kick off ascend.js
-		let errLog;
-		const ascendArgs = ['--install-augmentations', true,
-			'--on-reset-script', ns.getScriptName(), // TODO: Preserve the current script's state / args through the reset		
-			'--bypass-stanek-warning', true] // TODO: Automate accepting stanek's gift now that we can
-		let pid = launchScriptHelper(ns, 'ascend.js', ascendArgs);
-		ns.tail()
-		if (pid) {
-			log(ns, "INFO: Waiting for ascension", true, 'info');
-			await waitForProcessToComplete(ns, pid, true); // Wait for the script to shut down (Ascend should get killed as it does, since the BN will be rebooting)
-			await ns.asleep(1000); // If we've been scheduled to be killed, awaiting an NS function should trigger it?
-			errLog = `ERROR: ascend.js ran, but we're still here. Something must have gone wrong. Will try again later`;
-			log(ns, errLog, true, 'error');
-		} else {
-			errLog = `ERROR: Failed to launch ascend.js (pid == 0). Will try again later`;
-			log(ns, errLog, true, 'error');
-		}
-	}
+
 	// reload to avoid memory leak/slowdown
 	if (ns.fileExists("rebootPlease.txt", "home")) {
 		ns.rm("rebootPlease.txt", "home");
