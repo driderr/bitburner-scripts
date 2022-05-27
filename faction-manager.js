@@ -15,6 +15,7 @@ const potentialGangFactions = ["Slum Snakes", "Tetrads", "The Black Hand", "The 
 const default_hidden_stats = ['bladeburner', 'hacknet']; // Hide from the summary table by default because they clearly all come from one faction.
 const output_file = "/Temp/affordable-augs.txt";
 const staneksGift = "Stanek's Gift - Genesis";
+const factionsWithoutDonation = ["Bladeburners", "Church of the Machine God"]; // Not allowed to donate to these factions for rep
 
 // Factors used in calculations
 const nfCountMult = 1.14; // Factors that control how neuroflux prices scale
@@ -113,7 +114,7 @@ export async function main(ns) {
     effectiveSourceFiles = await getActiveSourceFiles(ns, true);
     const sf4Level = playerData.bitNodeN == 4 ? 3 : ownedSourceFiles[4] || 0; // If in BN4, singularity costs are as though you had SF4.3
     if (sf4Level == 0)
-        return log(ns, `ERROR: This script requires SF4 (singularity) functions to work.`, true, 'ERROR');
+        return log(ns, `ERROR: This script requires SF4 (singularity) functions to work.`, true, 'error');
     else if (sf4Level < 3)
         log(ns, `WARNING: This script makes heavy use of singularity functions, which are quite expensive before you have SF4.3. ` +
             `Unless you have a lot of free RAM for temporary scripts, you may get runtime errors.`);
@@ -261,7 +262,7 @@ async function updateFactionData(ns, factionsToOmit) {
         favor: dictFactionFavors[faction],
         donationsUnlocked: dictFactionFavors[faction] >= favorToDonate &&
             // As a rule, cannot donate to gang factions or any of the below factions - need to use other mechanics to gain rep.
-            ![gangFaction, "Bladeburners", "Church of the Machine God"].includes(faction),
+            ![gangFaction, ...factionsWithoutDonation].includes(faction),
         augmentations: dictFactionAugs[faction],
         unownedAugmentations: function (includeNf = false) { return this.augmentations.filter(aug => !simulatedOwnedAugmentations.includes(aug) && (aug != strNF || includeNf)) },
         mostExpensiveAugCost: function () { return this.augmentations.map(augName => augmentationData[augName]).reduce((max, aug) => Math.max(max, aug.price), 0) },
