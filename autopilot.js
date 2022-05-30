@@ -289,15 +289,15 @@ async function checkIfBnIsComplete(ns, player) {
 	}
 	// Detect if a BN win condition has been met
 	let bnComplete = player.hacking >= wdHack;
-	if (!bnComplete && player.inBladeburner) // Detect the BB win condition
+	if (!bnComplete && player.inBladeburner && (7 in unlockedSFs)) // Detect the BB win condition
 		bnComplete = await getNsDataThroughFile(ns,
-			`ns.bladeburner.getActionCountRemaining('blackop', 'Operation Daedalus')`,
+			`ns.bladeburner.getActionCountRemaining('blackop', 'Operation Daedalus') === 0`,
 			'/Temp/bladeburner-completed.txt');
 	if (!bnComplete) return false; // No win conditions met
 
 	const text = `BN ${player.bitNodeN}.${dictOwnedSourceFiles[player.bitNodeN] + 1} completed at ` +
 		`${formatDuration(player.playtimeSinceLastBitnode)} ` +
-		`(${(player.hacking >= wdHack ? `hack (${wdHack})` : 'bladeburner')} win condition)`;
+		`(${(player.hacking >= wdHack ? `hack (${wdHack.toFixed(0)})` : 'bladeburner')} win condition)`;
 	await persist_log(ns, text);
 	log(ns, `SUCCESS: ${text}`, true, 'success');
 
@@ -331,11 +331,13 @@ async function checkIfBnIsComplete(ns, player) {
 	pid = await runCommand(ns, `ns.singularity.destroyW0r1dD43m0n(ns.args[0], ns.args[1])`,
 		'/Temp/singularity-destroyW0r1dD43m0n.js', [nextBn, ns.getScriptName()]);
 	if (pid) {
+		log(ns, `SUCCESS: Initiated process ${pid} to execute 'singularity.destroyW0r1dD43m0n' with args: [${nextBn}, ${ns.getScriptName()}]`, true, 'success')
 		await waitForProcessToComplete(ns, pid);
+		log(ns, `WARNING: Process is done running, why am I still here? Sleeping 10 seconds...`, true, 'error')
 		await ns.sleep(10000);
 	}
-	log(ns, `ERROR: Tried destroy the bitnode, but we're still here...`, true, 'error')
-	return bnCompletionSuppressed = true;
+	await persist_log(ns, log(ns, `ERROR: Tried destroy the bitnode (pid=${pid}), but we're still here...`, true, 'error'));
+	//return bnCompletionSuppressed = true; // Don't suppress bn Completion, try again on our next loop.
 }
 
 /** Helper to get a list of all scripts running (on home)
@@ -506,7 +508,8 @@ async function maybeDoCasino(ns, player) {
 	// Make sure "work-for-factions.js" is dead first, lest it steal focus and break the casino script before it has a chance to kill all scripts. 
 	await killScript(ns, 'work-for-factions.js');
 	// Kill any action, in case we are studying or working out, as it might steal focus or funds before we can bet it at the casino.
-	await getNsDataThroughFile(ns, `ns.stopAction()`, '/Temp/stop-action.txt');
+	if (4 in unlockedSFs) // No big deal if we can't, casino.js has logic to find the stop button and click it.
+		await getNsDataThroughFile(ns, `ns.stopAction()`, '/Temp/stop-action.txt');
 
 	const pid = launchScriptHelper(ns, 'casino.js', ['--kill-all-scripts', true, '--on-completion-script', ns.getScriptName()]);
 	if (pid) {
@@ -596,8 +599,7 @@ async function maybeInstallAugmentations(ns, player) {
 
 	// Otherwise, we've got the money reserved, we can afford the augs, we should be confident to ascend
 	const resetLog = `Invoking ascend.js at ${formatDuration(player.playtimeSinceLastAug).padEnd(11)} since last aug to install: ${augSummary}`;
-	log(ns, `INFO: ${resetLog}`, true, 'info');
-	await persist_log(ns, resetLog);
+	await persist_log(ns, log(ns, resetLog, true, 'info'));
 
 	// Kick off ascend.js
 	let errLog;
@@ -609,11 +611,10 @@ async function maybeInstallAugmentations(ns, player) {
 		await waitForProcessToComplete(ns, pid, true); // Wait for the script to shut down (Ascend should get killed as it does, since the BN will be rebooting)
 		await ns.sleep(1000); // If we've been scheduled to be killed, awaiting an NS function should trigger it?
 		errLog = `ERROR: ascend.js ran, but we're still here. Something must have gone wrong. Will try again later`;
-		log(ns, errLog, true, 'error');
 	} else
 		errLog = `ERROR: Failed to launch ascend.js (pid == 0). Will try again later`;
 	// If we got this far, something went wrong
-	await persist_log(ns, errLog);
+	await persist_log(ns, log(ns, errLog, true, 'error'));
 }
 
 /** Logic to detect if we are close to a milestone and should postpone installing augmentations until it is hit
