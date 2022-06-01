@@ -46,7 +46,7 @@ export function formatNumber(num, minSignificantFigures = 3, minDecimalPlaces = 
 }
 
 /** Formats some RAM amount as a round number of GB with thousands separators e.g. `1,028 GB` */
-export function formatRam(num) { return `${Math.round(num).toLocaleString()} GB`; }
+export function formatRam(num) { return `${Math.round(num).toLocaleString('en')} GB`; }
 
 /** Return a datatime in ISO format */
 export function formatDateTime(datetime) { return datetime.toISOString(); }
@@ -228,7 +228,7 @@ export async function runCommand_Custom(ns, fnRun, command, fileName, args = [],
     else disableLogs(ns, ['sleep']);
     // Auto-import any helpers that the temp script attempts to use
     const required = getExports(ns).filter(e => command.includes(`${e}(`));
-    let script = (required.length > 0 ? `import { ${required.join(", ")} } from '${getFilePath('helpers.js')}'\n` : '') +
+    let script = (required.length > 0 ? `import { ${required.join(", ")} } from 'helpers.js'\n` : '') +
         `export async function main(ns) { ${command} }`;
     fileName = fileName || `/Temp/${hashCode(command)}-command.js`;
     // It's possible for the file to be deleted while we're trying to execute it, so even wrap writing the file in a retry
