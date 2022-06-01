@@ -72,6 +72,7 @@ export async function main(ns) {
 	//******drider section
 	//on force reload, WFF messes everything up - kill it, and stockmaster keeps taking away our cash
 	let corp = eval('ns.corporation');
+/*
 	ns.ps("home").filter(p => p.filename == "/abs/work-for-factions.js").map(p => ns.kill(p.pid));
 	ns.ps("home").filter(p => p.filename == "/abs/stockmaster.js").map(p => ns.kill(p.pid));
 	
@@ -96,10 +97,12 @@ export async function main(ns) {
 			log(ns, errLog, true, 'error');
 		}
 	}
+*/
 	if (ns.getPlayer().hasCorporation && corp.getCorporation().public) { //allow time for dividends to put in first deposit of reset
 		ns.tprint("Waiting for dividends...");
 		await ns.asleep(10000);
 	}
+/*
 	if (ns.getPlayer().money < 200e3) {
 		while (ns.getPlayer().money < 200e3) {
 			await ns.asleep(ns.commitCrime("mug"));
@@ -143,7 +146,8 @@ export async function main(ns) {
 		await ns.sleep(10000); // Keep the script alive to be safe. Presumably the page reloads before this completes.
 	}
 	ns.run("loadBoard.js");
-	ns.run("corp.js");
+	*/
+	ns.run("cBooter.js");
 	//******END drider section
 
 	while (true) {
